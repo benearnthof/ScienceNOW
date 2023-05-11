@@ -42,6 +42,7 @@ class ArxivSource(Source):
         feed = feedparser.parse(url)
         
         # Extract relevant post information
+        # TODO: Change this to return posts in Database format
         posts = []
         for entry in feed.entries:
             title = entry.title
