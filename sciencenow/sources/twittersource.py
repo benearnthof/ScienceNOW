@@ -7,6 +7,8 @@ import time
 from datetime import datetime, timezone
 from pytz import timezone as tz
 
+from base import Source
+
 class TwitterSource(Source):
     def __init__(self, consumer_key, consumer_secret, access_token, access_token_secret):
         auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
