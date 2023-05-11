@@ -7,6 +7,8 @@ import time
 import datetime
 from urllib.parse import urlencode
 
+from base import Source
+
 class ArxivSource(Source):
     """
     Uses feedparser library to retrieve posts from the arxiv.com RSS feed. 
