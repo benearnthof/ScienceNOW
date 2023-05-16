@@ -1,11 +1,13 @@
 """
 FastAPI app that gets entries from Arxiv & saves them to a postgres db
 """
-from typing import List, Optional
-from fastapi import FastAPI, Path
-from pydantic import BaseModel
+from fastapi import FastAPI
 
-from api.arxiv import router
+from sciencenow.api.arxiv import router
+from sciencenow.db.db_setup import engine
+from sciencenow.db.db_models import ArxivModel
+
+ArxivModel.metadata.create_all(bind=engine)
 
 # from sciencenow.db_models import ArxivPaper
 

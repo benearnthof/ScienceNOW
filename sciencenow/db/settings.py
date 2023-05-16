@@ -2,12 +2,12 @@
 load environment variables and export them as constants for database, api tokens & paths
 """
 import os
+from os import path
 from dotenv import load_dotenv
 
 
-PROJECT_ROOT = "envvars.env"
+load_dotenv(".env")
 
-load_dotenv(PROJECT_ROOT)
 
 DATABASE_HOSTNAME = os.environ.get("DB_HOSTNAME", "localhost")
 DATABASE_NAME = os.environ.get("DB_DATABASE_NAME", "scienceNOW")

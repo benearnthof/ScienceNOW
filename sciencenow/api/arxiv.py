@@ -22,7 +22,7 @@ DEFAULT_KEYWORDS = "nlp, deep learning"
 papers = []  # TODO: swap with postgresdb
 
 
-@router.get("/arxiv", response_model=List[ArxivPaper])
+@router.get("/arxiv", response_model=ArxivPaper)
 async def get_papers():
     return papers
 
