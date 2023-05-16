@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "sciencenow"
+version = "0.1.0"
+description = ""
+authors = ["Bene Arnthof <benearnthof@hotmail.de>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+uvicorn = "^0.22.0"
+fastapi = "^0.95.1"
+black = "^23.3.0"
+pydantic = "^1.10.7"
+sqlalchemy = "^2.0.13"
+psycopg2-binary = "^2.9.6"
+python-dotenv = "^1.0.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
