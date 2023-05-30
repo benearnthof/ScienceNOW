@@ -99,7 +99,7 @@ cat_list[0:10]
 # there should be some hierarchy to these clusters
 # restricting ourselves to computer science related articles
 cs_df = df[df["categories"].str.contains("cs.")]
-print(len(cd_df))  # 13738 Articles are left over
+print(len(cs_df))  # 13738 Articles are left over
 print(len(cs_df["categories"].unique()))  # 2842 Categories are now left
 
 sentence_list = cs_df["abstract"].tolist()
@@ -110,14 +110,55 @@ print(sentence_list[0])
 sample = sentence_list[0:2500]
 
 topic_model = BERTopic(calculate_probabilities=True)
-topics, probs = topic_model.fit_transform(sample)
+topics, probabilities = topic_model.fit_transform(sample)
 # topics => indices, probs => array of floats
 
 topic_info = topic_model.get_topic_info()
 
-topic_model.get_topic(0)  # first "interesting" topic
+topic_model.get_topic(1)  # first "interesting" topic
 topic_model.get_topic(10)
 
+barchart = topic_model.visualize_barchart(top_n_topics=10)
+barchart.show()
+
+viz = topic_model.visualize_topics()
+viz.show()
+
+hierarchy = topic_model.visualize_hierarchy()
+hierarchy.show()
+
+heatmap = topic_model.visualize_heatmap(n_clusters=6)
+heatmap.show()
+
+probs = topic_model.visualize_distribution(probabilities[10])
+probs.show()
+
+####
+# swapping out the dim reduction & clustering methods to improve speed
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+
+dim_model = PCA(n_components=5)
+cluster_model = KMeans(n_clusters=50)
+
+topic_model = BERTopic(
+    umap_model=dim_model,
+    embedding_model="allenai-specter",
+    hdbscan_model=cluster_model,
+    calculate_probabilities=True,
+)
+
+topics, probabilities = topic_model.fit_transform(sample)
+
+
+barchart = topic_model.visualize_barchart(top_n_topics=10)
+barchart.show()
+viz = topic_model.visualize_topics()
+viz.show()
+hierarchy = topic_model.visualize_hierarchy()
+hierarchy.show()
+heatmap = topic_model.visualize_heatmap(n_clusters=3)
+heatmap.show()
 
 # bertopic over time => topics_over_time
 # for instances that are dynamic over time

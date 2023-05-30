@@ -18,6 +18,9 @@ sqlalchemy-utils = "^0.41.1"
 sqlalchemy-searchable = "^1.4.1"
 alembic = "^1.11.0"
 bertopic = "^0.15.0"
+bs4 = "^0.0.1"
+bibtexparser = "^1.4.0"
+matplotlib = "^3.7.1"
 
 
 [build-system]
