@@ -17,6 +17,7 @@ python-dotenv = "^1.0.0"
 sqlalchemy-utils = "^0.41.1"
 sqlalchemy-searchable = "^1.4.1"
 alembic = "^1.11.0"
+bertopic = "^0.15.0"
 
 
 [build-system]
