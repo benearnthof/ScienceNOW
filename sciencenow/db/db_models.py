@@ -11,10 +11,6 @@ from sqlalchemy_utils import URLType
 from sciencenow.db.mixins import Timestamp
 from sciencenow.db.db_setup import Base
 
-# if "Base" not in globals():
-#    Base = declarative_base()
-#    make_searchable(Base.metadata)
-
 
 def str_repr(string):
     if sys.version_info.major == 3:
