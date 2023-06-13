@@ -21,6 +21,7 @@ bertopic = "^0.15.0"
 bs4 = "^0.0.1"
 bibtexparser = "^1.4.0"
 matplotlib = "^3.7.1"
+tables = "^3.8.0"
 
 
 [build-system]

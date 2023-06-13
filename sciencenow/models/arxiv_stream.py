@@ -2,15 +2,10 @@ import time
 from urllib.request import urlopen
 from urllib.error import HTTPError
 import datetime
-from itertools import ifilter
-from collections import Counter, defaultdict
 import xml.etree.ElementTree as ET
-
-from bs4 import BeautifulSoup
-from matplotlib import pyplot as plt
 import pandas as pd
-import numpy as np
-import bibtexparser
+from pathlib import Path
+
 
 pd.set_option("mode.chained_assignment", "warn")
 
@@ -19,6 +14,7 @@ ARXIV = "{http://arxiv.org/OAI/arXiv/}"
 
 
 def scrape(arxiv="cs"):
+    i = 0
     df = pd.DataFrame(
         columns=("title", "abstract", "categories", "created", "id", "doi")
     )
@@ -28,7 +24,7 @@ def scrape(arxiv="cs"):
         + "from=2020-01-01&until=2022-12-31&"
         + "metadataPrefix=arXiv&set=%s" % arxiv
     )
-    while True:
+    while i < 10:
         print("fetching", url)
         try:
             response = urlopen(url)
@@ -73,7 +69,13 @@ def scrape(arxiv="cs"):
             break
         else:
             url = base_url + "resumptionToken=%s" % (token.text)
+        i += 1
     return df
 
 
 df = scrape()
+
+store = pd.HDFStore(Path("c:/arxiv/arxiv_stream.h5"))
+store["df"] = df
+# df = store["df"]
+store.close()

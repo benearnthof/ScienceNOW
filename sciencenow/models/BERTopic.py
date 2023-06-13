@@ -127,7 +127,7 @@ viz.show()
 hierarchy = topic_model.visualize_hierarchy()
 hierarchy.show()
 
-heatmap = topic_model.visualize_heatmap(n_clusters=6)
+heatmap = topic_model.visualize_heatmap(n_clusters=7)
 heatmap.show()
 
 probs = topic_model.visualize_distribution(probabilities[10])
@@ -160,5 +160,34 @@ hierarchy.show()
 heatmap = topic_model.visualize_heatmap(n_clusters=3)
 heatmap.show()
 
+
+# Guided Topic Modeling:
+# select list of seed topics
+# map to original categories/clusters
+seed_topic_list = [
+    ["graph", "graphs", "problem", "polynomial"],
+    ["logic", "semantics", "that", "of"],
+    ["network", "networks", "community", "degree"],
+]
+
+topic_model = BERTopic(seed_topic_list=seed_topic_list)
+# TODO: fix compatibility issue with python 3.10 (numpy 1.21.0 should work)
+topics, probabilities = topic_model.fit_transform(sample)
+
+
 # bertopic over time => topics_over_time
 # for instances that are dynamic over time
+# Evolution of topics over time
+# calculate global topic model for largest topics that should be available at every time step
+# then obtain time specific representations
+# weighted average of global representation and repr. at t-1 allows "evolution" of
+# repr over time
+# => need twitter data for meaningful results
+
+
+# If new data comes in we can use online modeling
+# use incremental PCA for dimensionality reduction
+# and minibatch KMeans for clustering
+# (also need an incremental vectorizer)
+
+# to continuously add new clusters we need the river package
