@@ -1,37 +1,8 @@
-# Edge Version 114.0.1823.43
-import selenium
-
 # need a login, will need to continuously scroll to load more data
 import pandas as pd
 from tqdm import tqdm
 import snscrape.modules.twitter as sntwitter
 
-scraper = sntwitter.TwitterSearchScraper("NLP")
-scraper._mode = sntwitter.TwitterSearchScraperMode.TOP
-# mode can switch between live and top
-
-# full url search seems to work
-for tweet in scraper.get_items():
-    break
-
-tweets = []
-for i, tweet in enumerate(scraper.get_items()):
-    data = [
-        tweet.date,
-        tweet.id,
-        tweet.rawContent,
-        tweet.user.username,
-        tweet.likeCount,
-        tweet.retweetCount,
-    ]
-    tweets.append(data)
-    if i == 50:
-        break
-
-
-tweet_df = pd.DataFrame(
-    tweets, columns=["date", "id", "content", "username", "likecount", "retweetcount"]
-)
 
 # how do we best run this for a large number of papers?
 # restricting ourselves to certain users/hashtags may be helpful
