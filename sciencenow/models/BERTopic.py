@@ -40,7 +40,7 @@ class ArxivProcessor:
             ids.append(paper_dict["id"])
             titles.append(paper_dict["title"])
             abstracts.append(paper_dict["abstract"])
-            categories.append(paper_dict["categories"])
+            cats.append(paper_dict["categories"])
             refs.append(paper_dict["journal-ref"])
             timestamps.append(paper_dict["versions"][0]["created"])  # 0 should be v1
         # process timestamps so that they can be sorted
@@ -50,7 +50,8 @@ class ArxivProcessor:
                 "id": ids,
                 "title": titles,
                 "abstract": abstracts,
-                "categories": categories,
+                "categories": cats,
+                "references": refs
                 "timestamp": timestamps_datetime,
             }
         )
