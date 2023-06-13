@@ -15,54 +15,56 @@ from bertopic import BERTopic
 from pathlib import Path
 import json
 from datetime import datetime
+from tqdm import tqdm
 
-arxiv_path = Path("c:/arxiv/arxiv-metadata-oai-snapshot.json")
-
-
-def get_data():
-    with open(arxiv_path, "r") as f:
-        for line in f:
-            yield line
+ARXIV_PATH = Path("c:/arxiv/arxiv-metadata-oai-snapshot.json")
 
 
-data = get_data()  # generator, emits strings
-ids = []
-titles = []
-abstracts = []
-categories = []
-refs = []
-timestamps = []
-index = 0
+class ArxivProcessor:
+    def __init__(self, path=ARXIV_PATH, sorted=True **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.path = path
+        self.sorted = sorted
+
+    def _get_data(self):
+        with open(self.path, "r") as file:
+            for line in file:
+                yield line
+
+    def _process_data(self)
+        date_format = "%a, %d %b %Y %H:%M:%S %Z"
+        data_generator = self._get_data()
+        ids, titles, abstracts, cats, refs, timestamps = [],[],[],[],[],[]
+        for paper in tqdm(data_generator):
+            paper_dict = json.loads(paper)
+            ids.append(paper_dict["id"])
+            titles.append(paper_dict["title"])
+            abstracts.append(paper_dict["abstract"])
+            categories.append(paper_dict["categories"])
+            refs.append(paper_dict["journal-ref"])
+            timestamps.append(paper_dict["versions"][0]["created"])  # 0 should be v1
+        # process timestamps so that they can be sorted
+        timestamps_datetime = [datetime.strptime(stamp, date_format) for stamp in timestamps]
+        out = pd.DataFrame(
+            {
+                "id": ids,
+                "title": titles,
+                "abstract": abstracts,
+                "categories": categories,
+                "timestamp": timestamps_datetime,
+            }
+        )
+        if self.sorted:
+            return out.sort_values("timestamp", ascending=False)
+        return out
 
 
-for paper in data:
-    index += 1
-    paper_dict = json.loads(paper)
-    try:
-        #    try: #TODO: more general way to obtain year from ref
-        #        year = int(
-        #            paper_dict["journal-ref"][-4:]
-        #        )  ### Example Format: "Phys.Rev.D76:013009,2007"
-        #    except:
-        #        year = int(
-        #            paper_dict["journal-ref"][-5:-1]
-        #        )  ### Example Format: "Phys.Rev.D76:013009,(2007)"
-        ids.append(paper_dict["id"])
-        titles.append(paper_dict["title"])
-        abstracts.append(paper_dict["abstract"])
-        categories.append(paper_dict["categories"])
-        refs.append(paper_dict["journal-ref"])
-        timestamps.append(paper_dict["versions"][0]["created"])  # 0 should be v1
-    except:
-        pass
-    if index % 1000 == 0:
-        print(index)
 
-print(len(ids) / index)
+#print(len(ids) / index)
 # about 30% of the data
 
-for ref in refs[0:100]:
-    print(f"{ref}")
+#for ref in refs[0:100]:
+#    print(f"{ref}")
 
 # about 60& of papers dont have a journal reference
 # using timestamps of versions as a proxy for release year
@@ -83,12 +85,16 @@ sorted_times = sorted(timestamps_datetime)  # TODO visualize data
 # use subset for now
 df = pd.DataFrame(
     {
-        "id": ids[0:100000],
-        "title": titles[0:100000],
-        "abstract": abstracts[0:100000],
-        "categories": categories[0:100000],
+        "id": ids,
+        "title": titles,
+        "abstract": abstracts,
+        "categories": categories,
+        "timestamp": timestamps_datetime,
     }
 )
+
+sorted = df.sort_values("timestamp", ascending=False)
+
 
 df.head()
 # inspect available categories
