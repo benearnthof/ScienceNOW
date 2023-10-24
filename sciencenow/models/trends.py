@@ -479,7 +479,7 @@ from sklearn.feature_extraction.text import CountVectorizer
 
 # Sub models
 umap_model = UMAP(n_neighbors=15, n_components=5, min_dist=0.0, metric='cosine', random_state=42)
-cluster_model = KMeans(n_clusters=150) # replacing HDBSCAN since we do not wish to obtain outliers
+cluster_model = KMeans(n_clusters=64) # replacing HDBSCAN since we do not wish to obtain outliers
 vectorizer_model = CountVectorizer(stop_words="english")
 
 # Train our semi-supervised topic model
@@ -512,3 +512,173 @@ for parent_id, topic_set in tqdm(zip(set(topics), [[topic] for topic in set(topi
         score1 = round(min(overlap1, overlap2), 1)
         results.loc[len(results), :] = [parent_id, topic_set, target, overlap1, overlap2, score, score1]
 results = results[results['Score']==results.groupby('Target')['Score'].transform('max')]
+
+test = results.drop_duplicates(subset="Topics")
+
+# these results are example groupings based on maximum overlap
+# we need a heuristic to select meaningful topic groups that are unique
+
+# relabeling classes based on these merging results
+topic_info
+docinfo = topic_model.get_document_info(docs_2020)
+classes = docinfo["Topic"]
+# if results["Topics"] is not [0] then the class 
+# needs to be relabeled with numeric_map_2020
+
+topic_groups = results["Topics"]
+topic_targets = results["Target"]
+# remove first two lists since they define the roots of the hierarchy
+topic_group_list_of_lists = topic_groups.to_list()[1:]
+
+def find_list_index(list_of_lists, number):
+    for i, sublist in enumerate(list_of_lists):
+        if number in sublist:
+            return i  # Return the index if the number is found in the sublist
+    return -1  # Return -1 if the number is not found in any sublist
+
+indices = []
+for cls in tqdm(classes):
+    indices.append(find_list_index(topic_group_list_of_lists, number=cls))
+
+merged_labels = []
+for cls, ind in tqdm(zip(classes, indices)):
+    if ind == -1: # if class was not part of remapping list we keep original mapping
+        merged_labels.append(cls)
+    else: 
+        merged_labels.append(topic_targets.to_list()[ind])
+
+Counter(merged_labels)
+len(Counter(merged_labels))
+
+# we need to merge "backwards" 
+print(results)
+# if cls == 62: target is 62
+# if cls is contained in any of the longer
+
+# we need to merge in reverse: 
+# first relabel based on singlets: 
+# 62 remains, 61 remains, 59 remains etc
+# then relabel based on doubles: 
+# [1, 51] => 45, [7, 68] => 16 etc.
+# then relabel based on triples: 
+# [1, 51, 88] => 7
+# does this make sense??
+topic_info["Representation"][1]
+topic_info["Representation"][51]
+topic_info["Representation"][88]
+
+# these topics would end up being grouped as
+numeric_map_2020[7]
+# computational Geometry
+# in the earlier step as
+numeric_map[45]
+# this seems correct.
+# so we only relabel those that have not yet appeared at a deeper level
+# in the hierarchy
+# [1, 51] -> 45 (Data Structures and Algorithms & Discrete Mathematics)
+# [88] -> Computational Geometry
+numeric_map[60]
+# [92] -> Systems and Control
+# we repeat this until we have only our 64 target classes remaining
+
+def merge_topics(result_table, original_classes):
+    """
+    Perform Backwards Merging to recover target hierarchy.
+    """
+    # only use mappings with the largest overlap scores
+    uniques = result_table.drop_duplicates(subset="Topics")
+    # for singlets/unmerged clusters no remapping needs to be done
+    singlets = result_table[result_table['Topics'].apply(lambda x: x == [0])]
+    # find the deepest level in hierarchy where original class is found
+    def find_last_index_with_number(list_of_lists, target_number):
+        for i, sublist in enumerate(reversed(list_of_lists)):
+            if target_number in sublist:
+                return len(list_of_lists) - 1 - i
+        return None  # Return None if the target number is not found in any sublist
+    # step through hierarchy backwards
+    merged_labels = []
+    for cls in original_classes.to_list(): # original_classes
+        if cls in singlets["Target"].to_list():
+            merged_labels.append(cls)
+            continue
+        index = find_last_index_with_number(uniques["Topics"].to_list(), cls)
+        merged_labels.append(uniques["Target"].to_list()[index])
+    return merged_labels
+
+merged_labels = merge_topics(results, original_classes=docinfo["Topic"])
+find_last_index_with_number(results["Topics"].to_list(), cls)
+
+
+len(set(merged_labels))
+
+# targets 2, 3, 4, 9 are singlets
+topic_info["Representation"][0]
+numeric_map_2020[2]
+numeric_map_2020[3]
+numeric_map_2020[4]
+numeric_map_2020[9]
+numeric_map_2020[44]
+
+# some values only appear in the largest topic cluster => should also be treated as singlets?
+def missing_elements(L):
+    start, end = L[0], L[-1]
+    return sorted(set(range(start, end + 1)).difference(L))
+
+missing = missing_elements(list(set(merged_labels)))
+# numeric_map_2020[41] # Computers and Society
+# topic_info["Representation"][28] # 'students', 'covid19', 'pandemic', 'health', 'mobility'
+# numeric_map_2020[34] # Computation and Language 
+# topic_info["Representation"][30] # 'entity', 'text', 'language', 'event', 'models', 'nlp'
+# numeric_map_2020[44] # Computer Vision and Pattern Recognition
+# topic_info["Representation"][38] # 'image', 'object', 'classification', 'cnns', 'training', 'convolutional',
+# numeric_map_2020[45] # Data Structures and Algorithms
+# topic_info["Representation"][51] # graphs, graph, vertices, number, vertex, 
+# numeric_map_2020[5] # Computer Vision and Pattern Recognition & Machine Learning
+# topic_info["Representation"][50] # federated, f1, distributed, communication,
+# numeric_map_2020[44] # Computer Vision and Pattern Recognition
+# topic_info["Representation"][54] # 'plant', 'images', 'satellite', 'imagery', 'species', 'classification',
+# numeric_map_2020[46] # Networking and Internet Architecture
+# topic_info["Representation"][55] # 'network', 'traffic', 'service', 'routing', 'sdn', 'packet', 'internet',
+# numeric_map_2020[44] # Computer Vision and Pattern Recognition
+# topic_info["Representation"][56] # Captioning, visual, video, vqa
+
+# 30 appears in hierarchy, should be mapped to 34
+# doublecheck all missing values
+index = find_last_index_with_number(uniques["Topics"].to_list(), 56)
+uniques["Target"].to_list()[index] # works
+
+numeric_map[55]
+[28, 30, 38, 50, 51, 54, 55, 56]
+test = result_table[result_table['Target'].apply(lambda x: x == 30)]
+
+# we cannot filter by unique else we lose information about targets
+# we need to preserve target structure to have a 64 label mapping
+
+tree = topic_model.get_topic_tree(hierarchical_topics)
+print(tree)
+
+# compare merged_labels to numeric_labels_2020
+from sklearn.metrics import confusion_matrix
+cm = confusion_matrix(numeric_labels_2020, merged_labels)
+import seaborn as sns
+sns.set()
+import matplotlib.pyplot as plt
+plt.figure(figsize = (50,50))
+sns.heatmap(cm, annot=True, fmt="d", linewidth=.5)
+plt.savefig(str(ARTIFACTS) + "/cm_2020_200_kmeans.png")
+
+# -0.0926 for default umap with 15 neighbors and 5 components
+# accuracy scores
+true_pos = np.diag(cm)
+false_pos = np.sum(cm, axis=0) - true_pos
+false_neg = np.sum(cm, axis=1) - true_pos
+
+precision = np.sum(true_pos / (true_pos + false_pos)) # 23.67
+recall = np.sum(true_pos / (true_pos + false_neg)) # 31.41
+accuracy = np.sum(true_pos / (np.sum(cm))) # 0.36
+"""
+Results: 150kmeans:
+    Precision: 0.28
+    Recall: 0.28
+    Accuracy: 0.28
+"""
