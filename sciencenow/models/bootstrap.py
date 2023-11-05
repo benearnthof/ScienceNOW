@@ -13,30 +13,111 @@ from sentence_transformers import SentenceTransformer
 import time
 from embetter.text import SentenceEncoder
 import pandas as pd
+from pathlib import Path
 
-docs = docs_2020
-labs = labels_2020.to_list() # not needed since they are not informative enough for meaningful cluster comparison
-n_labs = numeric_labels_2020
+#docs = docs_2020 # TODO: Clean up all preprocessing utils
+#labs = labels_2020.to_list() # not needed since they are not informative enough for meaningful cluster comparison
+#n_labs = numeric_labels_2020
 
 # Idea: Fit Unsupervised Model to data first to obtain clusters and labels
 # Step 0: Gridsearch to compare impact of hyperparameters on the number of cluster and outliers that are 
 # generated
 
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+sentence_model = SentenceTransformer("all-MiniLM-L6-v2")
 # precompute embeddings
-embeddings_2020 = embedding_model.encode(docs_2020, show_progress_bar=True)
+# embeddings_2020 = embedding_model.encode(docs_2020, show_progress_bar=True)
 
 # neighbors: 5, 10 , 15, 20
 # n_components: 2:20
 # min_cluster_size: 10, 20, 30, ..., 250
 # TODO: evaluate scores => obtain corpus and vocab needed for octis etc. 
-nbors = range(10, 25, 1)
+nbors = range(10, 20, 2)
 # for anything more than 10 components the clustering saturates at around 65 clusters
 # 5 neighbors and min cluster size of 100
-ncomp = range(3, 12, 1) 
-mclust = range(10, 250, 10)
+ncomp = range(5, 11, 2) 
+mclust = range(25, 300, 25)
 
-len(nbors) * len(ncomp)
+len(nbors) * len(ncomp) * len(mclust) * 50 / 3600
+from bertopic import BERTopic
+
+params = {
+    "verbose": True,
+    "umap_model": UMAP(n_neighbors = 15, n_components=5, metric='cosine', low_memory=False, random_state=42),
+    "hdbscan_model": HDBSCAN(min_cluster_size=1000, metric='euclidean', prediction_data=True),
+    "ctfidf_model": ClassTfidfTransformer(reduce_frequent_words=True)
+}
+
+
+tm = BERTopic(**params)
+
+from sentence_transformers import SentenceTransformer
+from ScienceNOW.sciencenow.models.trainer import Trainer
+from ScienceNOW.sciencenow.models.dataloader import DataLoader
+from sklearn.feature_extraction.text import CountVectorizer
+
+dataset, custom = "arxiv", True
+data_loader = DataLoader(dataset)
+data, timestamps = data_loader.load_docs()
+#data, timestamps = docs, timestamps
+# timestamps = [str(stamp) for stamp in timestamps]
+# model = SentenceTransformer("all-mpnet-base-v2")
+# sentence_model = SentenceTransformer("all-MiniLM-L6-v2")
+#_, timestamps = data_loader.load_docs()
+#
+
+embeddings = sentence_model.encode(data, show_progress_bar=True)
+
+topics, _ = tm.fit_transform(data, embeddings)
+
+custom_path = Path("/dss/dssmcmlfs01/pr74ze/pr74ze-dss-0001/ru25jan4/ScienceNOW/artifacts/bootstrap")
+
+# Extract vocab to be used in BERTopic
+from collections import Counter
+docs = data
+vocab = Counter()
+tokenizer = CountVectorizer().build_tokenizer()
+for doc in tqdm(docs):
+     vocab.update(tokenizer(doc))
+
+with open(custom_path / "vocab.txt", "w") as file:
+    for item in vocab:
+        file.write(item+"\n")
+file.close()
+
+docs = [doc.replace("\n", " ") for doc in docs]
+assert all("\n" not in doc for doc in docs)
+
+with open(custom_path / "corpus.tsv", "w") as file:
+    for document in docs:
+        file.write(document + "\n")
+file.close()
+
+# now run every set of parameters three times to help combat randomness introduced by UMAP
+from tqdm import tqdm
+results = []
+len(range(10,21,1)) * len(range(25, 325, 25)) * 60 / 3600
+for neigh in tqdm(range(10,21,1)):
+    for clust in range(25, 325, 25):
+        params = {
+        "verbose": False,
+        "umap_model": UMAP(n_neighbors = neigh, n_components=5, metric='cosine', low_memory=False, random_state=42),
+        "hdbscan_model": HDBSCAN(min_cluster_size=clust, metric='euclidean', prediction_data=True),
+        "ctfidf_model": ClassTfidfTransformer(reduce_frequent_words=True)
+        }
+        trainer = Trainer(dataset=dataset,
+                        model_name="BERTopic",
+                        params=params,
+                        bt_embeddings=embeddings,
+                        custom_dataset=custom,
+                        bt_timestamps=None,
+                        topk=5,
+                        bt_nr_bins=10,
+                        verbose=True)
+        res = trainer.train()
+        results.append(res)
+
+
+
 
 # 8640 * 50 / 3600 120 hours => need smaller gridsearch
 results = pd.DataFrame(columns = ["neighbors", "components", "topics", "outliers"])
@@ -61,6 +142,8 @@ for n in nbors:
         results.loc[len(results), :] = [n, c, t, o]
         print(f"Neighbors: {n}, Components: {c}, Topics: {t}, Outliers: {o}")
 
+
+https://github.com/MaartenGr/BERTopic/issues/1423
 # TODO: obtain proper preprocessing script
 # TODO: clean up codebase
 # TODO: compute performance scores => OCTIS trainer.py
