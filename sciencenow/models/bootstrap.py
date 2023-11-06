@@ -143,6 +143,20 @@ with open(custom_path / "results.pkl", "rb") as file:
     results = pickle.load(file)
 file.close()
 
+tops = [x[0]["Topics"] for x in results]
+from collections import Counter
+
+cnt = [Counter(x) for x in tops]
+n_outs = [x[-1] for x in cnt]
+
+minouts = np.argmin(n_outs)
+maxouts = np.argmax(n_outs)
+results[8][0]["Params"] # min_cluster_size=25, min_samples=41
+results[8][0]["Scores"] # {'npmi': 0.08112440690032077, 'diversity': 0.7185185185185186}
+Counter(results[8][0]["Topics"]) # 160 topics, 21194 outliers
+results[80][0]["Params"] # min_cluster_size=225, min_samples=1
+results[80][0]["Scores"] # {'npmi': 0.08216433282418788, 'diversity': 0.8588235294117647}
+Counter(results[80][0]["Topics"]) # 50 topics, 12464 outliers
 
 # 8640 * 50 / 3600 120 hours => need smaller gridsearch
 results = pd.DataFrame(columns = ["neighbors", "components", "topics", "outliers"])
@@ -171,8 +185,7 @@ for n in nbors:
 https://github.com/MaartenGr/BERTopic/issues/1423
 # TODO: obtain proper preprocessing script
 # TODO: clean up codebase
-# TODO: compute performance scores => OCTIS trainer.py
-# TODO: how investigate outliers
+# TODO: investigate outliers
 # TODO: add secondary & tertiary models
 
 # after we optimize hyperparameters for coherence & diversity 
