@@ -4,30 +4,23 @@ Wrapper for mass import of Arxiv Data
 
 import pandas as pd
 from pathlib import Path
-import json
 from tqdm import tqdm
 import numpy as np
-import pickle
-import re
-import string
 from dateutil import parser
 from omegaconf import OmegaConf
-import time
-from collections import Counter, defaultdict, OrderedDict 
-import argparse
-import os 
-import pytz
-import sys
+from collections import Counter 
+from os import getcwd
 import warnings
-from dateutil import parser
 from enum import Enum
 from sentence_transformers import SentenceTransformer
 from umap import UMAP
+from sklearn.feature_extraction.text import CountVectorizer
+
 #from cuml.manifold import UMAP # need the GPU implementation to process 2 million embeddings
 
 
 # run this in ScienceNOW directory
-cfg = Path(os.getcwd()) / "./sciencenow/config/secrets.yaml"
+cfg = Path(getcwd()) / "./sciencenow/config/secrets.yaml"
 config = OmegaConf.load(cfg)
 
 class FP(Enum):
@@ -36,6 +29,8 @@ class FP(Enum):
     REDUCED_EMBEDS = Path(config.REDUCED_EMBEDDINGS)
     FEATHER = Path(config.FEATHER_PATH)
     TAXONOMY = Path(config.TAXONOMY_PATH)
+    VOCAB = Path(config.VOCAB_PATH)
+    CORPUS = Path(config.CORPUS_PATH)
 
 LABEL_MAP = {
     "stat": "Statistics",
@@ -44,31 +39,6 @@ LABEL_MAP = {
     "cs": "Computer Science",
     "math": "Mathematics"
 } # anything else is physics
-
-
-
-subset # 2020 subset
-# Extract vocab to be used in BERTopic
-from collections import Counter
-docs = data
-vocab = Counter()
-tokenizer = CountVectorizer().build_tokenizer()
-for doc in tqdm(docs):
-     vocab.update(tokenizer(doc))
-
-with open(custom_path / "vocab.txt", "w") as file:
-    for item in vocab:
-        file.write(item+"\n")
-file.close()
-
-docs = [doc.replace("\n", " ") for doc in docs]
-assert all("\n" not in doc for doc in docs)
-
-with open(custom_path / "corpus.tsv", "w") as file:
-    for document in docs:
-        file.write(document + "\n")
-file.close()
-
 
 
 class ArxivProcessor:
@@ -178,13 +148,37 @@ class ArxivProcessor:
             self.arxiv_df["abstract"] = docs
             print(f"Successfully removed newlines, leading, and traling spaces from {len(docs)} abstracts.")
     
-    def extract_vocabulary():
-        """Extracts a vocabulary from `self.arxiv_df` for Topic Model Evaluation with OCTIS"""
-        pass
+    @staticmethod
+    def extract_vocabulary(subset, fp):
+        """
+        Extracts a vocabulary from a target subset of data for Topic Model Evaluation with OCTIS
+        Params:
+            subset: pandas data frame that has been preprocessed and contains all relevant documents in the column "abstract"
+            fp: `Path` that specifies location where vocab will be written to.
+        """
+        docs = subset.abstract.tolist()
+        vocab = Counter()
+        tokenizer = CountVectorizer().build_tokenizer()
+        print(f"Building vocab for {len(docs)} documents...")
+        for doc in tqdm(docs):
+            vocab.update(tokenizer(doc))
+        with open(fp, "w") as file:
+            for item in vocab:
+                file.write(item+"\n")
+        file.close()
+        print(f"Successfully built vocab for subset at {fp}.")
 
-    def extract_corpus():
-        """Extracts a corpus in .tsv format from `self.arxiv_df` for Topic Model Evaluation wth OCTIS"""
-        pass
+    @staticmethod
+    def extract_corpus(subset, fp):
+        """Extracts a corpus in .tsv format from a target subset of data for Topic Model Evaluation wth OCTIS"""
+        docs = subset.abstract.tolist()
+        assert all("\n" not in doc for doc in docs)
+        print(f"Building corpus for {len(docs)} documents...")
+        with open(fp, "w") as file:
+            for document in tqdm(docs):
+                file.write(document + "\n")
+        file.close()
+        print(f"Successfully built corpus at {fp}")
 
     def load_embeddings(self):
         """Loads Embeddings that have been previously saved with `embed_abstracts`"""
@@ -250,7 +244,6 @@ class ArxivProcessor:
             print(f"Successfully loaded {len(self.taxonomy)} labels from {self.FP.TAXONOMY.value}")
             # keys = arxiv_taxonomy.keys()
             # values = arxiv_taxonomy.values()
-
 
     def filter_by_taxonomy(self, subset, target="cs", threshold=100):
         """
