@@ -14,36 +14,61 @@ from dateutil import parser
 from omegaconf import OmegaConf
 import time
 from collections import Counter, defaultdict, OrderedDict 
-import xml.etree.ElementTree as ET
 import argparse
-import urllib.request
-import urllib
-from bs4 import BeautifulSoup
 import os 
 import pytz
-import datetime as dt
+# import datetime as dt
 import sys
 import warnings
 from dateutil import parser
-from sentence_transformers import SentenceTransformer
-# from umap import UMAP
-from cuml.manifold import UMAP
+#from sentence_transformers import SentenceTransformer
+#from cuml.manifold import UMAP # need the GPU implementation to process 2 million embeddings
 
 
-cfg = Path(os.getcwd()) / "ScienceNOW/sciencenow/config/secrets.yaml"
+# run this in ScienceNOW directory
+cfg = Path(os.getcwd()) / "./sciencenow/config/secrets.yaml"
 config = OmegaConf.load(cfg)
 ARXIV_PATH = Path(config.ARXIV_SNAPSHOT)
 EMBEDDINGS_PATH = Path(config.EMBEDDINGS)
 REDUCED_EMBEDDINGS_PATH = Path(config.REDUCED_EMBEDDINGS)
+FEATHER_PATH = Path(config.FEATHER_PATH)
+
 
 embeddings = np.load(EMBEDDINGS_PATH)
 embeddings.shape
 
-# from cuml.manifold import UMAP
-umap_model = UMAP(
-    n_components=5, n_neighbors=15, random_state=42, metric="cosine", verbose=True, low_memory=True,
-)
-reduced_embeddings = umap_model.fit_transform(embeddings)
+reduced_embeddings = np.load(REDUCED_EMBEDDINGS_PATH)
+reduced_embeddings.shape
+
+arxiv_df = pd.read_json(ARXIV_PATH, lines=True)
+arxiv_df = arxiv_df.drop_duplicates(subset="id")
+
+versions = arxiv_df.versions_dates
+assert all(versions) # TODO: move to tests
+v1_dates = [x[0] for x in versions]
+print(f"Parsing {len(v1_dates)} version 1 strings to datetime format...")
+v1_datetimes = [parser.parse(dt) for dt in tqdm(v1_dates)]
+arxiv_df["v1_datetime"] = v1_datetimes
+arxiv_df = arxiv_df.sort_values("v1_datetime")
+print("Datetime parsing complete.")
+arxiv_df = arxiv_df.reset_index()
+
+arxiv_df.to_feather(FEATHER_PATH)   # 1.849.153
+                                    # 1.794.757 after removing trailing spaces and newline characters
+
+# arxiv_df = pd.read_feather(FEATHER_PATH)
+start = "1 1 2020"
+a, b, c = start.split(" ")
+start = pd.to_datetime(parser.parse(f"{a} {b} {c} 00:00:00 GMT"))
+end = "31 12 2020"
+a, b, c = end.split(" ")
+end = pd.to_datetime(parser.parse(f"{a} {b} {c} 23:59:59 GMT"))
+
+mask = [(date > start) & (date < end) for date in tqdm(arxiv_df["v1_datetime"])]
+
+subset = arxiv_df.loc[mask]
+
+
 
 
 class ArxivProcessor:
@@ -62,7 +87,8 @@ class ArxivProcessor:
         reduced_embeddings_path=REDUCED_EMBEDDINGS_PATH,
         neighbors=15,
         components=5,
-        metric="cosine"
+        metric="cosine",
+        feather_path=FEATHER_PATH
         ) -> None:
         super().__init__()
         self.arxiv_path = arxiv_path
@@ -82,13 +108,37 @@ class ArxivProcessor:
                             random_state=42)
         self.reduced_embeddings_path = reduced_embeddings_path
         self.reduced_embeddings = None
+        self.feather_path = feather_path
 
     def load_snapshot(self) -> None:
         """Method that reads OAI snapshot into dataframe for easier handling."""
-        print("Loading OAI json snapshot from scratch, this may take a moment...")
-        self.arxiv_df = pd.read_json(self.arxiv_path, lines=True)
-        self.arxiv_df = self.arxiv_df.drop_duplicates(subset="id")
-        print("Setup complete.")
+        if self.feather_path.exists():
+            print(f"Found preprocessed data at {self.feather_path}. Loading from there...")
+            self.load_feather()
+        else:
+            print("Loading OAI json snapshot from scratch, this may take a moment...")
+            self.arxiv_df = pd.read_json(self.arxiv_path, lines=True)
+            self.arxiv_df = self.arxiv_df.drop_duplicates(subset="id")
+            print("Setup complete, parsing datetimes...")
+            self.parse_datetime()
+            self.preprocess_abstracts()
+            print("Serializing data to .feather...}")
+            # need to reset index 
+            self.arxiv_df = self.arxiv_df.reset_index()
+            self.save_feather()
+
+    def save_feather(self):S
+        """
+        Method to store a preprocessed dataframe as .feather file.
+        A dataframe of 2 Million documents will take up about 1.9 GB of space on disk.
+        """
+        self.arxiv_df.to_feather(self.feather_path)
+        print(f"Stored dataframe at {self.feather_path}.")
+
+    def load_feather(self):
+        """Method to load a preprocessed dataframe stored as .feather format."""
+        self.arxiv_df = pd.read_feather(self.feather_path)
+        print(f"Loaded dataframe from {self.feather_path}")
 
     def parse_datetime(self) -> None:
         """Method that converts raw version dates to single publication timestamps for further processing."""
@@ -106,8 +156,22 @@ class ArxivProcessor:
             print("Datetime parsing complete.")
 
     def filter_by_date_range(self, startdate, enddate):
-        """Returns a subset of the data based on a given start and end date time"""
-        pass
+        """
+        Returns a subset of the data based on a given start and end date time.
+        Will exclusively filter data from 00:00:00 GMT of startdate to 23:59:00 GMT of enddate.
+        Params:
+            startdate: string of the form "day month year" with their respective numeric values
+            enddate: string of the form "day month year" with their respective numeric values
+                each seperated by spaces. Example: "31 12 2020" corresponds to the 31st of December 2020.
+        """
+        a, b, c = startdate.split(" ")
+        start = pd.to_datetime(parser.parse(f"{a} {b} {c} 00:00:00 GMT"))
+        a, b, c = enddate.split(" ")
+        end = pd.to_datetime(parser.parse(f"{a} {b} {c} 23:59:59 GMT"))
+        # computing mask takes a moment if the dataframe has lots of rows
+        mask = [(date > start) & (date < end) for date in tqdm(self.arxiv_df["v1_datetime"])]
+        subset = self.arxiv_df.loc[mask]
+        return(subset)
 
     def preprocess_abstracts(self):
         """Runs basic preprocessing on abstracts such as removal of newline characters"""
@@ -115,7 +179,7 @@ class ArxivProcessor:
             warnings.warn("No data loaded yet. Load snapshot or fully processed dataset first.")
         else:
             # remove newline characters and strip leading and traling spaces.
-            docs = [doc.replace("\n", " ") for doc in self.arxiv_df["abstract"].tolist()]
+            docs = [doc.replace("\n", " ").strip() for doc in self.arxiv_df["abstract"].tolist()]
             self.arxiv_df["abstract"] = docs
             print(f"Successfully removed newlines, leading, and traling spaces from {len(docs)} abstracts.")
     
