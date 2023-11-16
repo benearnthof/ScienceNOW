@@ -32,6 +32,12 @@ class FP(Enum):
     VOCAB = Path(config.VOCAB_PATH)
     CORPUS = Path(config.CORPUS_PATH)
 
+class PARAMS(Enum):
+    SENTENCE_MODEL = config.SENTENCE_MODEL
+    UMAP_NEIGHBORS = config.UMAP_NEIGHBORS
+    UMAP_COMPONENTS = config.UMAP_COMPONENTS
+    UMAP_METRIC = config.UMAP_METRIC
+
 LABEL_MAP = {
     "stat": "Statistics",
     "q-fin": "Quantitative Finance",
@@ -52,28 +58,18 @@ class ArxivProcessor:
     def __init__(
         self, 
         sort_by_date=True,
-        neighbors=15,
-        components=5,
-        metric="cosine",
         ) -> None:
         super().__init__()
         self.FP = FP
+        self.PARAMS = PARAMS
         self.label_map = LABEL_MAP
         self.arxiv_df = None
         self.sort_by_date = sort_by_date
-        self.sentence_model = SentenceTransformer("all-MiniLM-L6-v2") # TODO: move setup to embedding function
         self.embeddings = None
-        self.neighbors = neighbors
-        self.components = components
-        self.metric="cosine"
-        self.umap_model = UMAP(
-                            n_neighbors = self.neighbors, 
-                            n_components=self.components, 
-                            metric=self.metric, 
-                            # low_memory=True, # required for millions of documents on CPU
-                            random_state=42) # TODO: move setup to embedding function
         self.reduced_embeddings = None
         self.taxonomy = None
+        self.subset_embeddings = None
+        self.subset_reduced_embeddings = None
 
     def load_snapshot(self) -> None:
         """Method that reads OAI snapshot into dataframe for easier handling."""
@@ -92,7 +88,7 @@ class ArxivProcessor:
             self.arxiv_df = self.arxiv_df.reset_index()
             self.save_feather()
 
-    def save_feather(self):S
+    def save_feather(self):
         """
         Method to store a preprocessed dataframe as .feather file.
         A dataframe of 2 Million documents will take up about 1.9 GB of space on disk.
@@ -185,7 +181,7 @@ class ArxivProcessor:
         if not self.FP.EMBEDS.value.exists():
             print(f"No precomputed embeddings found in {self.FP.EMBEDS.value}. Call `embed_abstracts` first.")
         else:
-            self.embeddings = np.load(self.FP.EMBEDS.value())
+            self.embeddings = np.load(self.FP.EMBEDS.value)
             print(f"Successfully loaded embeddings for {self.embeddings.shape[0]} documents.")
 
     def embed_abstracts(self):
@@ -198,6 +194,7 @@ class ArxivProcessor:
             self.load_embeddings()
         else:# Embedding from scratch takes about 40 minutes on a 40GB A100
             print(f"No precomputed embeddings on disk, encoding {len(self.arxiv_df)} documents...")
+            self.sentence_model = SentenceTransformer(self.PARAMS.SENTENCE_MODEL.value) # TODO: move setup to embedding function
             self.embeddings = self.sentence_model.encode(self.arxiv_df["abstract"].tolist(), show_progress_bar=True)
             # embeddings = sentence_model.encode(new["abstract"].tolist(), show_progress_bar=True)
             # saving embeddings to disk
@@ -215,14 +212,29 @@ class ArxivProcessor:
             self.reduced_embeddings = np.load(self.FP.REDUCED_EMBEDS.value())
             print(f"Successfully loaded reduced embeddings for {self.reduced_embeddings.shape[0]} documents of dimensionality {self.reduced_embeddings.shape[1]}")
         
-    def reduce_embeddings():
+    def setup_umap_model(self):
+        """Wrapper to move UMAP setup away from class initialization."""
+        self.umap_model = UMAP(
+                            n_neighbors = self.PARAMS.UMAP_NEIGHBORS.value, 
+                            n_components=self.PARAMS.UMAP_COMPONENTS.value, 
+                            metric=self.PARAMS.UMAP_METRIC.value, 
+                            # low_memory=True, # required for millions of documents on CPU
+                            random_state=42)
+
+    def reduce_embeddings(self, subset=None):
         """Obtain Reduced Embeddings with UMAP to save time in Topic Modeling steps."""
-        if self.embeddings is None:
+        if subset:
+            self.setup_umap_model()
+            assert self.subset_embeddings is not None
+            self.subset_reduced_embeddings = self.umap_model.fit_transform(self.subset_embeddings)
+            print(f"Successfully reduced embeddings of subset from {self.subset_embeddings.shape} to {self.subset_reduced_embeddings.shape}")
+        elif self.embeddings is None:
             warnings.warn("No embeddings loaded yet. Load them from disk or process a dataset with `embed_abstracts`")
         elif self.FP.REDUCED_EMBEDS.value.exists():
             print(f"Found precomputed reduced embeddings on disk. Loading from {self.FP.REDUCED_EMBEDS.value}...")
             self.load_reduced_embeddings()
         else:
+            self.setup_umap_model()
             self.reduced_embeddings=self.umap_model.fit_transform(self.embeddings)
             # reduced_embeddings = umap_model.fit_transform(embeddings)^
             np.save(self.FP.REDUCED_EMBEDS.value, self.reduced_embeddings, allow_pickle=False)
@@ -260,6 +272,7 @@ class ArxivProcessor:
             target: string descriptor of class of interest. e.g. "cs" for Computer Science or "math" for 
                 Mathematics
         """
+        self.load_taxonomy()
         print(f"Filtering subset to only contain papers related to {target}...")
         # categories for every paper is a list of categories
         cats = subset.categories.tolist()
@@ -314,3 +327,31 @@ class ArxivProcessor:
         subset_filtered = subset_filtered.assign(plaintext_labels= plaintext_labels)
         print(f"Successfully filtered {len(subset)} documents to {len(subset_filtered)} remaining documents.")
         return subset_filtered
+
+    def bertopic_setup(self, subset, recompute=False):
+        """
+        Method to add reduced embeddings to a subset of documents.
+        Params: 
+            subset: `dataframe` of documents with ids matching the row number in `self.embeddings` and `self.reduced_embeddings`
+            recompute: `bool` that specifies if reduced embeddings should be recomputed.
+        """
+        # `index` column of subset matches the index column in processor.arxiv_df
+        if not self.embeddings:
+            self.load_embeddings()
+        if not self.arxiv_df:
+            self.load_snapshot()
+        assert self.embeddings.shape[0] == self.arxiv_df.shape[0]
+        ids = subset.index.tolist()
+        self.subset_embeddings = self.embeddings[ids]
+        # need to grant option to recompute reduced embeddings based on subset
+        if not recompute:
+            if not self.reduced_embeddings:
+                self.load_reduced_embeddings()
+            else:
+                self.subset_reduced_embeddings = self.reduced_embeddings[ids]
+        else:
+            print("Recomputing reduced embeddings for subset...")
+            self.reduce_embeddings(subset=subset)
+        # Setting up corpus and vocabulary
+        self.extract_corpus(subset=subset, fp=self.FP.CORPUS.value)
+        self.extract_vocabulary(subset=subset, fp=self.FP.VOCAB.value)
