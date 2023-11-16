@@ -13,10 +13,10 @@ from os import getcwd
 import warnings
 from enum import Enum
 from sentence_transformers import SentenceTransformer
-from umap import UMAP
+# from umap import UMAP
 from sklearn.feature_extraction.text import CountVectorizer
 
-#from cuml.manifold import UMAP # need the GPU implementation to process 2 million embeddings
+from cuml.manifold import UMAP # need the GPU implementation to process 2 million embeddings
 
 
 # run this in ScienceNOW directory
@@ -209,7 +209,7 @@ class ArxivProcessor:
         if not self.FP.REDUCED_EMBEDS.value.exists():
             print(f"No precomputed reduced embeddings found in {self.FP.REDUCED_EMBEDS.value}. Call `reduce_embeddings` first.")
         else:
-            self.reduced_embeddings = np.load(self.FP.REDUCED_EMBEDS.value())
+            self.reduced_embeddings = np.load(self.FP.REDUCED_EMBEDS.value)
             print(f"Successfully loaded reduced embeddings for {self.reduced_embeddings.shape[0]} documents of dimensionality {self.reduced_embeddings.shape[1]}")
         
     def setup_umap_model(self):
@@ -223,7 +223,7 @@ class ArxivProcessor:
 
     def reduce_embeddings(self, subset=None):
         """Obtain Reduced Embeddings with UMAP to save time in Topic Modeling steps."""
-        if subset:
+        if subset is not None:
             self.setup_umap_model()
             assert self.subset_embeddings is not None
             self.subset_reduced_embeddings = self.umap_model.fit_transform(self.subset_embeddings)
@@ -336,22 +336,22 @@ class ArxivProcessor:
             recompute: `bool` that specifies if reduced embeddings should be recomputed.
         """
         # `index` column of subset matches the index column in processor.arxiv_df
-        if not self.embeddings:
+        if self.embeddings is None:
             self.load_embeddings()
-        if not self.arxiv_df:
+        if self.arxiv_df is None:
             self.load_snapshot()
         assert self.embeddings.shape[0] == self.arxiv_df.shape[0]
         ids = subset.index.tolist()
         self.subset_embeddings = self.embeddings[ids]
         # need to grant option to recompute reduced embeddings based on subset
         if not recompute:
-            if not self.reduced_embeddings:
+            if self.reduced_embeddings is None:
                 self.load_reduced_embeddings()
-            else:
-                self.subset_reduced_embeddings = self.reduced_embeddings[ids]
+            self.subset_reduced_embeddings = self.reduced_embeddings[ids]
         else:
             print("Recomputing reduced embeddings for subset...")
             self.reduce_embeddings(subset=subset)
         # Setting up corpus and vocabulary
         self.extract_corpus(subset=subset, fp=self.FP.CORPUS.value)
         self.extract_vocabulary(subset=subset, fp=self.FP.VOCAB.value)
+        print("BERTopic setup complete.")
