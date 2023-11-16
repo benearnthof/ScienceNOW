@@ -1,2 +1,2 @@
 # ScienceNOW
-ScienceNOW: Topic Modelling with Tweets & Arxiv e-prints
+ScienceNOW: Topic Modelling with Arxiv e-prints
