@@ -77,12 +77,23 @@ assert all([val > threshold for val in Counter(subset.plaintext_labels).values()
 # IF
 # WHEN
 embeddings = processor.load_embeddings()
-# THEN
-processor.embeddings.shape[0] == processor.arxiv_df.shape[0]
 ids = subset.index.tolist()
 subset_abstracts = subset.loc[ids].abstract
 original_abstracts = processor.arxiv_df.loc[ids].abstract
+processor.bertopic_setup(subset=subset)
 
-target_embeddings = processor.embeddings[ids]
-# need to grant option to recompute reduced embeddings based on subset
+# THEN
+assert processor.embeddings.shape[0] == processor.arxiv_df.shape[0]
+assert all([x == y for x, y in zip(subset_abstracts,original_abstracts)])
+assert processor.subset_reduced_embeddings.shape == (subset.shape[0], 5)
 
+#### TEST EMBEDDING RECOMPUTE
+# IF 
+processor.bertopic_setup(subset=subset, recompute=True)
+# WHEN 
+recomp_embeds = processor.subset_reduced_embeddings
+processor.bertopic_setup(subset=subset, recompute=False)
+preload_embeds = processor.subset_reduced_embeddings
+# THEN 
+# unpack all array entries and compare every single entry to its preloaded counterpart
+assert all([w for z in [x != y for x, y in zip(recomp_embeds, preload_embeds)] for w in z])
