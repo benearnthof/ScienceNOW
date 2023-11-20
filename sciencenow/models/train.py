@@ -8,12 +8,14 @@ from enum import Enum
 from os import getcwd
 from collections import Counter
 from tqdm import tqdm
+import numpy as np
+import random
 import warnings
 
 from sklearn.feature_extraction.text import CountVectorizer
-# from sentence_transformers import SentenceTransformer
 from cuml.cluster import HDBSCAN
 from bertopic import BERTopic
+from bertopic.vectorizers import ClassTfidfTransformer
 
 
 from sciencenow.data.arxivprocessor import ArxivProcessor
@@ -28,16 +30,31 @@ enddate = "31 12 2020"
 target = "cs"
 threshold = 100
 
+startdate_21 = "01 01 2021"
+enddate_21 = "31 12 2021"
+
 subset = processor.filter_by_date_range(startdate=startdate, enddate=enddate) 
 subset = processor.filter_by_taxonomy(subset=subset, target=target, threshold=threshold)
 
-processor.bertopic_setup(subset=subset, recompute=True)
+subset_21 = processor.filter_by_date_range(startdate=startdate_21, enddate=enddate_21)
+subset_21 = processor.filter_by_taxonomy(subset=subset_21, target=target, threshold=threshold)
+
+subset1, subset2 = processor.filter_by_labelset(subset, subset_21)
+
+plaintext_labels, numeric_labels = processor.get_numeric_labels(subset1, mask_probability=0)
+
+processor.bertopic_setup(subset=subset1, recompute=True)
+unsupervised_reduced_embeddings = processor.subset_reduced_embeddings
+
+processor.bertopic_setup(subset=subset1, recompute=True, labels=numeric_labels)
 # now the processor class is ready to train topic models
 subset_reduced_embeddings = processor.subset_reduced_embeddings
 
 # run this in ScienceNOW directory
 cfg = Path(getcwd()) / "./sciencenow/config/secrets.yaml"
 config = OmegaConf.load(cfg)
+
+
 
 class TM_PARAMS(Enum):
     """
@@ -71,6 +88,8 @@ class ModelWrapper():
         tm_params=TM_PARAMS,
         hdbscan_params=hdbscan_params,
         model_type="base",
+        nr_topics=None,
+        nr_bins=52,
 
         ) -> None:
         super().__init__()
@@ -79,12 +98,15 @@ class ModelWrapper():
         self.tm_params = tm_params
         self.tm_vocab = None
         self.hdbscan_params=hdbscan_params
-        model_types=["base", "dynamic", "online", "antm"]
+        model_types=["base", "dynamic", "semisupervised", "online", "antm"]
         if model_type not in model_types:
             raise ValueError(f"Invalid model type. Expected on of {model_types}")
         self.model_type = model_type
         self.topics = None
         self.probs = None
+        self.nr_topics = None
+        self.topic_info = None
+        self.nr_bins = nr_bins
 
     def generate_tm_vocabulary(self, recompute=True):
         """
@@ -137,11 +159,15 @@ class ModelWrapper():
         )
         # remove stop words for vectorizer just in case
         self.vectorizer_model = CountVectorizer(vocabulary=self.tm_vocab, stop_words="english")
+        self.ctfidf_model = ClassTfidfTransformer(reduce_frequent_words=True)
+
         self.topic_model = BERTopic(
             umap_model=self.umap_model,
             hdbscan_model=self.hdbscan_model,
+            ctfidf_model=self.ctfidf_model,
             #vectorizer_model=self.vectorizer_model, # TODO: Investigate ValueError: Input contains infinity or a value too large for dtype('float64').
             verbose=True,
+            nr_topics=self.nr_topics
         )
         print("Setup complete.")
 
@@ -153,7 +179,25 @@ class ModelWrapper():
             docs = self.subset.abstract.tolist()
             embeddings = self.subset_reduced_embeddings
             self.topics, self.probs = self.topic_model.fit(documents=docs, embeddings=embeddings)
+            self.topic_info = self.topic_model.get_topic_info()
             print("Base Topic Model fit successfully.")
+        elif self.model_type == "dynamic":
+            # purely dynamic model without access to prior class labels
+            docs = self.subset.abstract.tolist()
+            embeddings = self.subset_reduced_embeddings
+            self.topics, self.probs = self.topic_model.fit_transform(docs, embeddings)
+            
+            self.topic_info = self.topic_model.get_topic_info()
+        elif self.model_type == "semisupervised":
+            
+
+
+
+####
+
+# now perform dynamic modeling as downstream task
+topics_over_time = topic_model.topics_over_time(docs_2020, timestamps_2020, nr_bins=52)
+
     
     def tm_save(self, name):
         """
@@ -176,3 +220,33 @@ class ModelWrapper():
         assert (Path(self.tm_params.TM_TARGET_ROOT.value) / name).exists()
         self.topic_model = BERTopic.load(Path(self.tm_params.TM_TARGET_ROOT.value) / name)
         print(f"Topic model at {Path(self.tm_params.TM_TARGET_ROOT.value) / name}loaded successfully.")
+
+
+
+umap_model = Dimensionality(subset_reduced_embeddings)
+hdbscan_model = HDBSCAN( # TODO: add KMEANS & River for online & supervised models
+            min_samples=hdbscan_params["samples"],
+            gen_min_span_tree=True,
+            prediction_data=True,
+            min_cluster_size=hdbscan_params["cluster_size"],
+            verbose=True,
+        )
+
+topic_model = BERTopic(
+            umap_model=umap_model,
+            hdbscan_model=hdbscan_model,
+            ctfidf_model=ctfidf_model,
+            #vectorizer_model=self.vectorizer_model, # TODO: Investigate ValueError: Input contains infinity or a value too large for dtype('float64').
+            verbose=True,
+            nr_topics=None
+        )
+
+docs = subset.abstract.tolist()
+topics, probs = topic_model.fit_transform(docs, subset_reduced_embeddings, y=numeric_labels)
+topic_info = topic_model.get_topic_info()
+
+
+mappings = topic_model.topic_mapper_.get_mappings()
+mappings = {value: numeric_map[key] for key, value in mappings.items()}
+
+topic_info["Class"] = topic_info.Topic.map(mappings)
