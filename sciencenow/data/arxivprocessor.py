@@ -221,12 +221,18 @@ class ArxivProcessor:
                             # low_memory=True, # required for millions of documents on CPU
                             random_state=42)
 
-    def reduce_embeddings(self, subset=None):
-        """Obtain Reduced Embeddings with UMAP to save time in Topic Modeling steps."""
+    def reduce_embeddings(self, subset=None, labels=None):
+        """
+        Obtain Reduced Embeddings with UMAP to save time in Topic Modeling steps.
+        Params:
+            subset: subset of data that has been filtered according to the desired specifications
+            labels: `np.array` of target labels for semi-supervised modeling
+        """
         if subset is not None:
             self.setup_umap_model()
             assert self.subset_embeddings is not None
-            self.subset_reduced_embeddings = self.umap_model.fit_transform(self.subset_embeddings)
+            # print(type(labels))
+            self.subset_reduced_embeddings = self.umap_model.fit_transform(self.subset_embeddings, y=labels)
             print(f"Successfully reduced embeddings of subset from {self.subset_embeddings.shape} to {self.subset_reduced_embeddings.shape}")
         elif self.embeddings is None:
             warnings.warn("No embeddings loaded yet. Load them from disk or process a dataset with `embed_abstracts`")
@@ -328,7 +334,7 @@ class ArxivProcessor:
         print(f"Successfully filtered {len(subset)} documents to {len(subset_filtered)} remaining documents.")
         return subset_filtered
 
-    def bertopic_setup(self, subset, recompute=False):
+    def bertopic_setup(self, subset, recompute=False, labels=None):
         """
         Method to add reduced embeddings to a subset of documents.
         Params: 
@@ -343,8 +349,12 @@ class ArxivProcessor:
         assert self.embeddings.shape[0] == self.arxiv_df.shape[0]
         ids = subset.index.tolist()
         self.subset_embeddings = self.embeddings[ids]
-        # need to grant option to recompute reduced embeddings based on subset
-        if not recompute:
+        # need to grant option to recompute reduced embeddings based on subset and labels for supervised models
+        if labels is not None:
+            # if labels are provided we need to recompute either way
+            self.reduce_embeddings(subset=subset, labels=labels)
+            print("Recomputed reduced embeddings with their respective labels.")
+        elif not recompute:
             if self.reduced_embeddings is None:
                 self.load_reduced_embeddings()
             self.subset_reduced_embeddings = self.reduced_embeddings[ids]
@@ -355,3 +365,40 @@ class ArxivProcessor:
         self.extract_corpus(subset=subset, fp=self.FP.CORPUS.value)
         self.extract_vocabulary(subset=subset, fp=self.FP.VOCAB.value)
         print("BERTopic setup complete.")
+
+    @staticmethod
+    def filter_by_labelset(subset1, subset2):
+        """
+        Filter two subsets to only include papers that fall into classes present in both subsets.
+        Used mainly to compare supervised models over multiple years.
+        """
+        labelset1, labelset2 = set(subset1["plaintext_labels"]), set(subset2["plaintext_labels"])
+        label_intersection = labelset1.intersection(labelset2)
+        def get_mask(subset, labelset):
+            return [lab in labelset for lab in subset["plaintext_labels"]]
+        mask1, mask2 = get_mask(subset1, label_intersection), get_mask(subset2, label_intersection)
+        res1, res2 = subset1.loc[mask1], subset2.loc[mask2]
+        return res1, res2
+
+    @staticmethod
+    def get_numeric_labels(subset, mask_probability):
+        """
+        Obtain a list of numeric labels from the plaintext labels of a subset of data.
+        Used for semisupervised models.
+        Params:
+            subset: `dataframe` that contains documents with their respective plaintext labels
+            mask_probability:  `float` that specifies the proportion of labels to be masked as -1
+        """
+        plaintext_labels = subset["plaintext_labels"]
+        plaintext_map = {k:v for k, v in zip(set(plaintext_labels), list(range(0, len(set(plaintext_labels)), 1)))}
+        numeric_map = {v:k for k, v in plaintext_map.items()}
+        numeric_labels = [plaintext_map[k] for k in plaintext_labels]
+        if mask_probability > 0:
+            num_labs = np.array(numeric_labels)
+            mask = np.array(random.choices([True, False], 
+                                        [mask_probability, 1-mask_probability], 
+                                        k=len(numeric_labels)))
+            num_labs[mask] = -1
+            numeric_labels = num_labs.tolist()
+        numeric_labels = np.array(numeric_labels)
+        return plaintext_labels, numeric_labels
