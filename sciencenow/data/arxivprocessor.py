@@ -125,6 +125,9 @@ class ArxivProcessor:
             enddate: string of the form "day month year" with their respective numeric values
                 each seperated by spaces. Example: "31 12 2020" corresponds to the 31st of December 2020.
         """
+        if startdate is None:
+            warnings.warn("No date range selected, returning full dataframe.")
+            return(self.arxiv_df)
         a, b, c = startdate.split(" ")
         start = pd.to_datetime(parser.parse(f"{a} {b} {c} 00:00:00 GMT"))
         a, b, c = enddate.split(" ")
@@ -278,6 +281,9 @@ class ArxivProcessor:
             target: string descriptor of class of interest. e.g. "cs" for Computer Science or "math" for 
                 Mathematics
         """
+        if target is None:
+            warnings.warn("No filter target selected, returning full dataframe.")
+            return subset
         self.load_taxonomy()
         print(f"Filtering subset to only contain papers related to {target}...")
         # categories for every paper is a list of categories
