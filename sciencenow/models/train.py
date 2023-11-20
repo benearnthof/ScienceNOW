@@ -21,40 +21,24 @@ from bertopic.vectorizers import ClassTfidfTransformer
 from sciencenow.data.arxivprocessor import ArxivProcessor
 from sciencenow.utils.wrappers import Dimensionality, River
 
-processor = ArxivProcessor()
-
+# TODO: Move this to tests
+"""processor = ArxivProcessor()
 processor.load_snapshot()
-
 startdate = "01 01 2020"
 enddate = "31 12 2020"
 target = "cs"
 threshold = 100
-
-startdate_21 = "01 01 2021"
-enddate_21 = "31 12 2021"
-
 subset = processor.filter_by_date_range(startdate=startdate, enddate=enddate) 
 subset = processor.filter_by_taxonomy(subset=subset, target=target, threshold=threshold)
-
-subset_21 = processor.filter_by_date_range(startdate=startdate_21, enddate=enddate_21)
-subset_21 = processor.filter_by_taxonomy(subset=subset_21, target=target, threshold=threshold)
-
-subset1, subset2 = processor.filter_by_labelset(subset, subset_21)
-
 plaintext_labels, numeric_labels = processor.get_numeric_labels(subset1, mask_probability=0)
 
-processor.bertopic_setup(subset=subset1, recompute=True)
-unsupervised_reduced_embeddings = processor.subset_reduced_embeddings
-
-processor.bertopic_setup(subset=subset1, recompute=True, labels=numeric_labels)
-# now the processor class is ready to train topic models
+processor.bertopic_setup(subset=subset, recompute=True, labels=numeric_labels)
+# # now the processor class is ready to train topic models
 subset_reduced_embeddings = processor.subset_reduced_embeddings
-
+"""
 # run this in ScienceNOW directory
 cfg = Path(getcwd()) / "./sciencenow/config/secrets.yaml"
 config = OmegaConf.load(cfg)
-
-
 
 class TM_PARAMS(Enum):
     """
@@ -67,9 +51,19 @@ class TM_PARAMS(Enum):
     TM_VOCAB_PATH=config.TM_VOCAB_PATH
     TM_TARGET_ROOT=config.TM_TARGET_ROOT
 
-hdbscan_params = {
-    "samples": 30,
-    "cluster_size": 30,
+setup_params = {
+    "samples": 30, # hdbscan samples
+    "cluster_size": 30, # hdbscan minimum cluster size
+    "startdate": "01 01 2020", # if no date range should be selected set startdate to `None`
+    "enddate":"31 12 2020",
+    "target": "cs", # if no taxonomy filtering should be done set target to `None`
+    "threshold": 100,
+    "labelmatch_subset": None,  # if you want to compare results to another subset of data which may potentially 
+                                # contain labels not present in the first data set this to a data subset.
+    "mask_probability": 0,
+    "recompute": True,
+    "nr_topics": None,
+    "nr_bins": 52 # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
 }
 
 class ModelWrapper():
@@ -78,35 +72,55 @@ class ModelWrapper():
     Params:
         subset: `dataframe` that contains documents, timestamps and labels
         tm_params: `TM_PARAMS` enum that contains all hyperparameters
-        hdbscan_params: `Dict` with hyperparameters for HDBSCAN
+        setup_params: `Dict` with hyperparameters for model setup
         model_type: `str`; one of "base", "dynamic", "online", "antm" 
     """
     def __init__(
         self, 
-        subset=None,
         subset_reduced_embeddings=None,
         tm_params=TM_PARAMS,
-        hdbscan_params=hdbscan_params,
+        setup_params=setup_params,
         model_type="base",
-        nr_topics=None,
-        nr_bins=52,
-
         ) -> None:
         super().__init__()
-        self.subset = subset
-        self.subset_reduced_embeddings = subset_reduced_embeddings
+        #### Setting up data subset, labels & embeddings via processor
+        self.processor = ArxivProcessor()
+        self.processor.load_snapshot()
         self.tm_params = tm_params
-        self.tm_vocab = None
-        self.hdbscan_params=hdbscan_params
-        model_types=["base", "dynamic", "semisupervised", "online", "antm"]
+        self.setup_params = setup_params
+        self.subset = self.processor.filter_by_date_range(
+            startdate=self.setup_params["startdate"],
+            enddate=self.setup_params["enddate"]
+            )
+        self.subset = self.processor.filter_by_taxonomy(
+            subset=self.subset, 
+            target=self.setup_params["target"], 
+            threshold=self.setup_params["threshold"]
+            )
+        self.plaintext_labels, self.numeric_labels = processor.get_numeric_labels(
+            subset = self.subset,
+            mask_probability=self.setup_params["mask_probability"])
+        model_types=["base", "dynamic", "semisupervised", "online", "antm", "embetter"]
         if model_type not in model_types:
             raise ValueError(f"Invalid model type. Expected on of {model_types}")
         self.model_type = model_type
+        if self.model_type == "semisupervised": #recompute embeddings with supervised umap
+            self.processor.bertopic_setup(
+                subset=self.subset, recompute=True, labels=self.numeric_labels
+                )
+        else:
+            self.processor.bertopic_setup(
+                subset=self.subset, recompute=True
+                )
+        self.subset_reduced_embeddings = self.processor.subset_reduced_embeddings
+        #### vocab for evaluation
+        self.tm_vocab = None
+        #### outputs
+        self.topic_model = None
         self.topics = None
         self.probs = None
-        self.nr_topics = None
         self.topic_info = None
-        self.nr_bins = nr_bins
+        self.topics_over_time = None
 
     def generate_tm_vocabulary(self, recompute=True):
         """
@@ -151,10 +165,10 @@ class ModelWrapper():
         # use precomputed reduced embeddings 
         self.umap_model = Dimensionality(self.subset_reduced_embeddings)
         self.hdbscan_model = HDBSCAN( # TODO: add KMEANS & River for online & supervised models
-            min_samples=self.hdbscan_params["samples"],
+            min_samples=self.setup_params["samples"],
             gen_min_span_tree=True,
             prediction_data=True,
-            min_cluster_size=self.hdbscan_params["cluster_size"],
+            min_cluster_size=self.setup_params["cluster_size"],
             verbose=True,
         )
         # remove stop words for vectorizer just in case
@@ -167,7 +181,7 @@ class ModelWrapper():
             ctfidf_model=self.ctfidf_model,
             #vectorizer_model=self.vectorizer_model, # TODO: Investigate ValueError: Input contains infinity or a value too large for dtype('float64').
             verbose=True,
-            nr_topics=self.nr_topics
+            nr_topics=self.setup_params["nr_topics"]
         )
         print("Setup complete.")
 
@@ -175,29 +189,35 @@ class ModelWrapper():
         """
         Wrapper to train topic model.
         """
+        if self.topic_model is None:
+            warnings.warn("No topic model set up yet. Call `tm_setup` first.")
         if self.model_type == "base":
             docs = self.subset.abstract.tolist()
             embeddings = self.subset_reduced_embeddings
             self.topics, self.probs = self.topic_model.fit(documents=docs, embeddings=embeddings)
             self.topic_info = self.topic_model.get_topic_info()
             print("Base Topic Model fit successfully.")
-        elif self.model_type == "dynamic":
-            # purely dynamic model without access to prior class labels
+        elif self.model_type in ["dynamic", "semisupervised"]:
+            # Training procedure is the same since both models use timestamps and for semisupervised
+            # the reduced embeddings were already recomputed based on the numeric labels while initializing
+            # the class
             docs = self.subset.abstract.tolist()
             embeddings = self.subset_reduced_embeddings
+            timestamps = self.subset.v1_datetime.tolist()
             self.topics, self.probs = self.topic_model.fit_transform(docs, embeddings)
-            
+            print(f"Fitting dynamic model with {len(timestamps)} timestamps and {self.setup_params["nr_bins"]} bins.")
+            self.topics_over_time = self.topic_model.topics_over_time(
+                docs, 
+                timestamps, 
+                nr_bins=self.setup_params["nr_bins"]
+                )
             self.topic_info = self.topic_model.get_topic_info()
-        elif self.model_type == "semisupervised":
-            
-
-
-
-####
-
-# now perform dynamic modeling as downstream task
-topics_over_time = topic_model.topics_over_time(docs_2020, timestamps_2020, nr_bins=52)
-
+        elif self.model_type == "online": # TODO: adapt from script
+            pass
+        elif self.model_type == "antm": # TODO: adapt from script
+            pass
+        elif self.model_type == "embetter" # TODO: adapt from script
+            pass
     
     def tm_save(self, name):
         """
@@ -222,13 +242,14 @@ topics_over_time = topic_model.topics_over_time(docs_2020, timestamps_2020, nr_b
         print(f"Topic model at {Path(self.tm_params.TM_TARGET_ROOT.value) / name}loaded successfully.")
 
 
-
+"""
+# Short hand to test setup
 umap_model = Dimensionality(subset_reduced_embeddings)
 hdbscan_model = HDBSCAN( # TODO: add KMEANS & River for online & supervised models
-            min_samples=hdbscan_params["samples"],
+            min_samples=setup_params["samples"],
             gen_min_span_tree=True,
             prediction_data=True,
-            min_cluster_size=hdbscan_params["cluster_size"],
+            min_cluster_size=setup_params["cluster_size"],
             verbose=True,
         )
 
@@ -240,13 +261,13 @@ topic_model = BERTopic(
             verbose=True,
             nr_topics=None
         )
-
-docs = subset.abstract.tolist()
-topics, probs = topic_model.fit_transform(docs, subset_reduced_embeddings, y=numeric_labels)
-topic_info = topic_model.get_topic_info()
+"""
 
 
-mappings = topic_model.topic_mapper_.get_mappings()
-mappings = {value: numeric_map[key] for key, value in mappings.items()}
 
-topic_info["Class"] = topic_info.Topic.map(mappings)
+# to test filter by labelset
+#startdate_21 = "01 01 2021"
+#enddate_21 = "31 12 2021"
+#subset_21 = processor.filter_by_date_range(startdate=startdate_21, enddate=enddate_21)
+#subset_21 = processor.filter_by_taxonomy(subset=subset_21, target=target, threshold=threshold)
+# subset1, subset2 = processor.filter_by_labelset(subset, subset_21)
