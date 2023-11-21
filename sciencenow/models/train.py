@@ -21,21 +21,6 @@ from bertopic.vectorizers import ClassTfidfTransformer
 from sciencenow.data.arxivprocessor import ArxivProcessor
 from sciencenow.utils.wrappers import Dimensionality, River
 
-# TODO: Move this to tests
-"""processor = ArxivProcessor()
-processor.load_snapshot()
-startdate = "01 01 2020"
-enddate = "31 12 2020"
-target = "cs"
-threshold = 100
-subset = processor.filter_by_date_range(startdate=startdate, enddate=enddate) 
-subset = processor.filter_by_taxonomy(subset=subset, target=target, threshold=threshold)
-plaintext_labels, numeric_labels = processor.get_numeric_labels(subset1, mask_probability=0)
-
-processor.bertopic_setup(subset=subset, recompute=True, labels=numeric_labels)
-# # now the processor class is ready to train topic models
-subset_reduced_embeddings = processor.subset_reduced_embeddings
-"""
 # run this in ScienceNOW directory
 cfg = Path(getcwd()) / "./sciencenow/config/secrets.yaml"
 config = OmegaConf.load(cfg)
@@ -76,8 +61,7 @@ class ModelWrapper():
         model_type: `str`; one of "base", "dynamic", "online", "antm" 
     """
     def __init__(
-        self, 
-        subset_reduced_embeddings=None,
+        self,
         tm_params=TM_PARAMS,
         setup_params=setup_params,
         model_type="base",
@@ -97,7 +81,7 @@ class ModelWrapper():
             target=self.setup_params["target"], 
             threshold=self.setup_params["threshold"]
             )
-        self.plaintext_labels, self.numeric_labels = processor.get_numeric_labels(
+        self.plaintext_labels, self.numeric_labels = self.processor.get_numeric_labels(
             subset = self.subset,
             mask_probability=self.setup_params["mask_probability"])
         model_types=["base", "dynamic", "semisupervised", "online", "antm", "embetter"]
@@ -150,15 +134,14 @@ class ModelWrapper():
     def load_tm_vocabulary(self):
         """Wrapper to quickly load a precomputed tm vocabulary to avoid recomputing between runs."""
         if not self.tm_params.TM_VOCAB_PATH.value.exists():
-            warnings.warn(f"No tm vocabulary found at {self.tm_params.TM_VOCAB_PATH.value}.
-                            Consider calling `generate_tm_vocabulary` first.")
+            warnings.warn(f"No tm vocabulary found at {self.tm_params.TM_VOCAB_PATH.value}.Consider calling `generate_tm_vocabulary` first.")
         else:
             with open(self.tm_params.TM_VOCAB_PATH.value, "r") as file:
                 self.tm_vocab = [row.strip() for row in file]
             file.close()
             print(f"Successfully loaded TopicModel vocab of {len(self.tm_vocab)} items.")
 
-    def tm_setup(self)
+    def tm_setup(self):
         """
         Wrapper to quickly set up a new topic model.
         """
@@ -172,7 +155,7 @@ class ModelWrapper():
             verbose=True,
         )
         # remove stop words for vectorizer just in case
-        self.vectorizer_model = CountVectorizer(vocabulary=self.tm_vocab, stop_words="english")
+        self.vectorizer_model = CountVectorizer(vocabulary=self.tm_vocab, stop_words="english") # not used 
         self.ctfidf_model = ClassTfidfTransformer(reduce_frequent_words=True)
 
         self.topic_model = BERTopic(
@@ -205,7 +188,7 @@ class ModelWrapper():
             embeddings = self.subset_reduced_embeddings
             timestamps = self.subset.v1_datetime.tolist()
             self.topics, self.probs = self.topic_model.fit_transform(docs, embeddings)
-            print(f"Fitting dynamic model with {len(timestamps)} timestamps and {self.setup_params["nr_bins"]} bins.")
+            print(f"Fitting dynamic model with {len(timestamps)} timestamps and {self.setup_params['nr_bins']} bins.")
             self.topics_over_time = self.topic_model.topics_over_time(
                 docs, 
                 timestamps, 
@@ -213,10 +196,11 @@ class ModelWrapper():
                 )
             self.topic_info = self.topic_model.get_topic_info()
         elif self.model_type == "online": # TODO: adapt from script
+            # KMEANS, RIVER clustering etc.
             pass
         elif self.model_type == "antm": # TODO: adapt from script
             pass
-        elif self.model_type == "embetter" # TODO: adapt from script
+        elif self.model_type == "embetter": # TODO: adapt from script
             pass
     
     def tm_save(self, name):
@@ -241,33 +225,3 @@ class ModelWrapper():
         self.topic_model = BERTopic.load(Path(self.tm_params.TM_TARGET_ROOT.value) / name)
         print(f"Topic model at {Path(self.tm_params.TM_TARGET_ROOT.value) / name}loaded successfully.")
 
-
-"""
-# Short hand to test setup
-umap_model = Dimensionality(subset_reduced_embeddings)
-hdbscan_model = HDBSCAN( # TODO: add KMEANS & River for online & supervised models
-            min_samples=setup_params["samples"],
-            gen_min_span_tree=True,
-            prediction_data=True,
-            min_cluster_size=setup_params["cluster_size"],
-            verbose=True,
-        )
-
-topic_model = BERTopic(
-            umap_model=umap_model,
-            hdbscan_model=hdbscan_model,
-            ctfidf_model=ctfidf_model,
-            #vectorizer_model=self.vectorizer_model, # TODO: Investigate ValueError: Input contains infinity or a value too large for dtype('float64').
-            verbose=True,
-            nr_topics=None
-        )
-"""
-
-
-
-# to test filter by labelset
-#startdate_21 = "01 01 2021"
-#enddate_21 = "31 12 2021"
-#subset_21 = processor.filter_by_date_range(startdate=startdate_21, enddate=enddate_21)
-#subset_21 = processor.filter_by_taxonomy(subset=subset_21, target=target, threshold=threshold)
-# subset1, subset2 = processor.filter_by_labelset(subset, subset_21)
