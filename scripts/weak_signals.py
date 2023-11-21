@@ -93,7 +93,13 @@ def calculate_topic_issue_map(topics_over_time):
     topic_set = set(topics_over_time.Topic)
     degs_of_diffusion = calculate_degree_of_diffusion(topics_over_time)
     geometric_means = {topic: gmean(degs_of_diffusion[topic]) for topic in topic_set}
-    growth_rages = {topic: }
+    growth_rates = {
+        topic: 
+        np.mean( # pairwise differences
+            [j - i for i, j in zip(degs_of_diffusion[topic][: -1], degs_of_diffusion[topic][1 :])]
+            ) 
+        for topic in topic_set
+        }
     average_frequencies = {
         topic: 
         topics_over_time
@@ -104,14 +110,15 @@ def calculate_topic_issue_map(topics_over_time):
         .tolist()[0] 
         for topic in topic_set
         }
-    return geometric_means, average_frequencies
+    return geometric_means, average_frequencies, growth_rates
 
-gmeans, avg_freqs = calculate_topic_issue_map(topics_over_time)
+gmeans, avg_freqs, grates = calculate_topic_issue_map(topics_over_time)
 
 temp = DataFrame({
         "Topic": list(set(topics_over_time.Topic)),
         "DoD_gmean": list(gmeans.values()),
-        "Avg_Freq": list(avg_freqs.values())
+        "Avg_Freq": list(avg_freqs.values()),
+        "Growth_Rate": list(grates.values())
         })
 
 temp = temp.sort_values(by=["Topic"])
@@ -119,13 +126,14 @@ temp = temp.sort_values(by=["Topic"])
 # topic_info is already sorted by topic, we can just append the two additional columns
 tinfo = topic_info.assign(DoD_gmean=temp.DoD_gmean.tolist())
 tinfo = tinfo.assign(Average_Frequency=temp.Avg_Freq.tolist())
+tinfo = tinfo.assign(Growth_Rate=temp.Growth_Rate.tolist())
 
 # degree of visibility = total occurence of keyword per time period
 # degree of diffusion = document frequency
 
 ax1 = tinfo.plot.scatter(
     x="Average_Frequency",
-    y="DoD_gmean",
+    y="Growth_Rate",
 )
 
 fig = ax1.get_figure()
