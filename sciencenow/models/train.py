@@ -176,7 +176,7 @@ class ModelWrapper():
                 gen_min_span_tree=True,
                 prediction_data=True,
                 min_cluster_size=self.setup_params["cluster_size"],
-                verbose=True,
+                verbose=False,
             )
             self.vectorizer_model = CountVectorizer(stop_words="english")
             # remove stop words for vectorizer just in case
@@ -187,7 +187,7 @@ class ModelWrapper():
             hdbscan_model=self.cluster_model,
             ctfidf_model=self.ctfidf_model,
             vectorizer_model=self.vectorizer_model,
-            verbose=True,
+            verbose=False,
             nr_topics=self.setup_params["nr_topics"]
         )
         print("Setup complete.")
@@ -223,6 +223,7 @@ class ModelWrapper():
             # subset is already ordered by datetime
             doclist = self.subset.abstract.tolist()
             doc_chunks = chunk_list(doclist, n=setup_params["nr_chunks"])
+            timestamps = self.subset.v1_datetime.tolist()
             self.topics = []
             for docs in tqdm(doc_chunks):
                 self.topic_model.partial_fit(docs)
@@ -231,7 +232,7 @@ class ModelWrapper():
             self.topic_model.topics_ = self.topics
             # need to quantize into bins for trend extraction
             self.topics_over_time = self.topic_model.topics_over_time(
-                docs, 
+                doclist, 
                 timestamps, 
                 nr_bins=self.setup_params["nr_bins"]
                 )
