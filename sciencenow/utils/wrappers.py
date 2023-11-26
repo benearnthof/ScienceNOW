@@ -32,3 +32,8 @@ class River:
             labels.append(label)
         self.labels_ = labels
         return self
+
+def chunk_list(a, n):
+    """Wrapper to split list of docs a into n chunks of approximately equal length."""
+    k, m = divmod(len(a), n)
+    return [a[i*k+min(i, m):(i+1)*k+min(i+1, m)] for i in range(n)]
