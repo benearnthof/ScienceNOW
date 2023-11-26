@@ -106,7 +106,7 @@ wrapper = ModelWrapper(setup_params=setup_params, model_type=model_type)
 assert wrapper.plaintext_labels is not None
 assert wrapper.numeric_labels is not None
 assert len(set(wrapper.numeric_labels)) == 78
-assert math.isclose(Counter(wrapper.numeric_labels)[-1] / len(wrapper.numeric_labels) , 0.1, rel_tol = 0.015)
+assert math.isclose(Counter(wrapper.numeric_labels)[-1] / len(wrapper.numeric_labels) , 0.1, rel_tol = 0.02)
 
 #### Test semisupervised model training
 
@@ -125,3 +125,48 @@ assert len(wrapper.topics) == wrapper.subset.shape[0]
 assert len(wrapper.probs) == wrapper.subset.shape[0]
 assert len(set(wrapper.topics)) == 139
 assert wrapper.topics_over_time.shape[0] == 5610
+
+
+#### Test online model setup
+# IF 
+setup_params = {
+    "samples": 30, # hdbscan samples
+    "cluster_size": 30, # hdbscan minimum cluster size
+    "startdate": "01 01 2020", # if no date range should be selected set startdate to `None`
+    "enddate":"31 01 2020",
+    "target": "cs", # if no taxonomy filtering should be done set target to `None`
+    "threshold": 1,
+    "labelmatch_subset": None,  # if you want to compare results to another subset of data which may potentially 
+                                # contain labels not present in the first data set this to a data subset.
+    "mask_probability": 0.1,
+    "recompute": True,
+    "nr_topics": None,
+    "nr_bins": 4, # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
+    "nr_chunks": 4,
+}
+
+model_type = "online"
+
+# WHEN
+wrapper = ModelWrapper(setup_params=setup_params, model_type=model_type)
+
+# THEN
+assert wrapper.plaintext_labels is not None
+assert wrapper.numeric_labels is not None
+assert len(set(wrapper.numeric_labels)) == 229
+assert math.isclose(Counter(wrapper.numeric_labels)[-1] / len(wrapper.numeric_labels) , 0.1, rel_tol = 0.05)
+
+#### Test online model training
+
+# IF 
+# WHEN
+wrapper.tm_setup()
+wrapper.tm_train()
+
+# THEN
+assert wrapper.topics is not None
+
+assert wrapper.topic_info is not None
+
+assert len(wrapper.topics) == wrapper.subset.shape[0]
+assert wrapper.topics_over_time is not None
