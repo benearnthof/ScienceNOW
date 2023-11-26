@@ -12,14 +12,16 @@ import numpy as np
 import random
 import warnings
 
+from river import cluster
 from sklearn.feature_extraction.text import CountVectorizer
 from cuml.cluster import HDBSCAN
 from bertopic import BERTopic
-from bertopic.vectorizers import ClassTfidfTransformer
+from bertopic.vectorizers import ClassTfidfTransformer, OnlineCountVectorizer
 
 
 from sciencenow.data.arxivprocessor import ArxivProcessor
-from sciencenow.utils.wrappers import Dimensionality, River
+from sciencenow.utils.wrappers import Dimensionality, River, chunk_list
+
 
 # run this in ScienceNOW directory
 cfg = Path(getcwd()) / "./sciencenow/config/secrets.yaml"
@@ -48,7 +50,16 @@ setup_params = {
     "mask_probability": 0,
     "recompute": True,
     "nr_topics": None,
-    "nr_bins": 52 # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
+    "nr_bins": 52, # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
+    "nr_chunks": 52, # number of chunks the documents should be split up into for online learning, set to 52 for 52 weeks per year
+}
+
+online_params = {# For online DBSTREAM https://riverml.xyz/latest/api/cluster/DBSTREAM/
+    "clustering_threshold": 1.0, # radius around cluster center that represents a cluster
+    "fading_factor": 0.01, # parameter that controls importance of historical data to current cluster > 0
+    "cleanup_interval": 2, # time interval between twwo consecutive time periods when the cleanup process is conducted
+    "intersection_factor": 0.3, # area of the overlap of the micro clusters relative to the area cover by micro clusters
+    "minimum_weight": 1.0 # minimum weight for a cluster to be considered not "noisy" 
 }
 
 class ModelWrapper():
@@ -64,6 +75,7 @@ class ModelWrapper():
         self,
         tm_params=TM_PARAMS,
         setup_params=setup_params,
+        online_params=online_params,
         model_type="base",
         ) -> None:
         super().__init__()
@@ -72,6 +84,7 @@ class ModelWrapper():
         self.processor.load_snapshot()
         self.tm_params = tm_params
         self.setup_params = setup_params
+        self.online_params = online_params
         self.subset = self.processor.filter_by_date_range(
             startdate=self.setup_params["startdate"],
             enddate=self.setup_params["enddate"]
@@ -147,22 +160,33 @@ class ModelWrapper():
         """
         # use precomputed reduced embeddings 
         self.umap_model = Dimensionality(self.subset_reduced_embeddings)
-        self.hdbscan_model = HDBSCAN( # TODO: add KMEANS & River for online & supervised models
-            min_samples=self.setup_params["samples"],
-            gen_min_span_tree=True,
-            prediction_data=True,
-            min_cluster_size=self.setup_params["cluster_size"],
-            verbose=True,
-        )
-        # remove stop words for vectorizer just in case
-        self.vectorizer_model = CountVectorizer(vocabulary=self.tm_vocab, stop_words="english") # not used 
-        self.ctfidf_model = ClassTfidfTransformer(reduce_frequent_words=True)
+        if self.model_type == "online":
+            self.cluster_model = River(
+                model=cluster.DBSTREAM(**self.online_params)
+            )
+            self.vectorizer_model = OnlineCountVectorizer(stop_words="english")
+            # bm25_weighting helps to increase robustness to stop words in smaller online data chunks
+            self.ctfidf_model = ClassTfidfTransformer(reduce_frequent_words=True, bm25_weighting=True)
+            # need to recompute embeddings for online model
+            self.umap_model = self.processor.umap_model
+            print(f"Successfully set up online model with umap model: {self.umap_model.n_neighbors} neighbors.")
+        else: 
+            self.cluster_model = HDBSCAN( # TODO: add KMEANS & River for online & supervised models
+                min_samples=self.setup_params["samples"],
+                gen_min_span_tree=True,
+                prediction_data=True,
+                min_cluster_size=self.setup_params["cluster_size"],
+                verbose=True,
+            )
+            self.vectorizer_model = CountVectorizer(stop_words="english")
+            # remove stop words for vectorizer just in case
+            self.ctfidf_model = ClassTfidfTransformer(reduce_frequent_words=True)
 
         self.topic_model = BERTopic(
             umap_model=self.umap_model,
-            hdbscan_model=self.hdbscan_model,
+            hdbscan_model=self.cluster_model,
             ctfidf_model=self.ctfidf_model,
-            #vectorizer_model=self.vectorizer_model, # TODO: Investigate ValueError: Input contains infinity or a value too large for dtype('float64').
+            vectorizer_model=self.vectorizer_model,
             verbose=True,
             nr_topics=self.setup_params["nr_topics"]
         )
@@ -196,8 +220,23 @@ class ModelWrapper():
                 )
             self.topic_info = self.topic_model.get_topic_info()
         elif self.model_type == "online": # TODO: adapt from script
-            # KMEANS, RIVER clustering etc.
-            pass
+            # subset is already ordered by datetime
+            doclist = self.subset.abstract.tolist()
+            doc_chunks = chunk_list(doclist, n=setup_params["nr_chunks"])
+            self.topics = []
+            for docs in tqdm(doc_chunks):
+                self.topic_model.partial_fit(docs)
+                self.topics.extend(self.topic_model.topics_)
+            # for postprocessing
+            self.topic_model.topics_ = self.topics
+            # need to quantize into bins for trend extraction
+            self.topics_over_time = self.topic_model.topics_over_time(
+                docs, 
+                timestamps, 
+                nr_bins=self.setup_params["nr_bins"]
+                )
+            self.topic_info = self.topic_model.get_topic_info()
+            
         elif self.model_type == "antm": # TODO: adapt from script
             pass
         elif self.model_type == "embetter": # TODO: adapt from script
