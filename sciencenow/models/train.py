@@ -204,7 +204,7 @@ class ModelWrapper():
             hdbscan_model=self.cluster_model,
             ctfidf_model=self.ctfidf_model,
             vectorizer_model=self.vectorizer_model,
-            verbose=False,
+            verbose=True,
             nr_topics=self.setup_params["nr_topics"],
             calculate_probabilities=False,
         )
@@ -222,7 +222,7 @@ class ModelWrapper():
             embeddings = self.subset_reduced_embeddings
             self.topics, _ = self.topic_model.fit(documents=docs, embeddings=embeddings)
             self.topic_info = self.topic_model.get_topic_info()
-            self.output_tm = self.get_base_topics()
+            # self.output_tm = self.get_base_topics()
             print("Base Topic Model fit successfully.")
         elif self.model_type in ["dynamic", "semisupervised"]:
             # Training procedure is the same since both models use timestamps and for semisupervised
@@ -242,7 +242,7 @@ class ModelWrapper():
                 )
             self.topic_info = self.topic_model.get_topic_info()
             # for evaluation
-            self.output_tm = self.get_dynamic_topics(self.topics_over_time))
+            # self.output_tm = self.get_dynamic_topics(self.topics_over_time)
             
         
         elif self.model_type == "online": # TODO: adapt from script
@@ -265,7 +265,7 @@ class ModelWrapper():
                 global_tuning=setup_params["global_tuning"],
                 )
             self.topic_info = self.topic_model.get_topic_info()
-            self.output_tm = self.get_dynamic_topics(self.topics_over_time))
+            # self.output_tm = self.get_dynamic_topics(self.topics_over_time)
 
         elif self.model_type == "antm": # TODO: adapt from script
             pass
@@ -274,7 +274,7 @@ class ModelWrapper():
 
         end = time.time()
         self.computation_time = float(end - start)
-        return self.output_tm, self.computation_time, self.topics
+        return self.computation_time, self.topics
     
     def tm_save(self, name):
         """
@@ -397,8 +397,15 @@ class ModelWrapper():
         results = []
         # setup topic model with specified parameters
         self.tm_setup()
-        output, computation_time, topics = self.tm_train()
-        scores = self.evaluate(output)
+        computation_time, topics = self.tm_train()
+        print(f"Getting evaluation outputs for {self.topics_over_time.shape} Topics over time.")
+        if self.model_type == "base":
+            self.output_tm = self.get_base_topics()
+        elif self.model_type in ["dynamic", "semisupervised", "online"]:
+            self.output_tm = self.get_dynamic_topics(self.topics_over_time)
+
+        print(f"Calculating Scores...")
+        scores = self.evaluate(self.output_tm)
         # update results 
         result = {
             "Dataset": "Arxiv",
@@ -414,4 +421,3 @@ class ModelWrapper():
             with open(f"{save}.json", "w") as f:
                 json.dump(results, f)
         return results
-    
