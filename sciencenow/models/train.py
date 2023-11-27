@@ -1,7 +1,8 @@
 """
 Wrapper class that unifies Topic Model training. 
 """
-
+import json
+import time
 from pathlib import Path
 from omegaconf import OmegaConf
 from enum import Enum
@@ -11,6 +12,8 @@ from tqdm import tqdm
 import numpy as np
 import random
 import warnings
+from typing import Mapping, Any, List, Tuple
+
 
 from river import cluster
 from sklearn.feature_extraction.text import CountVectorizer
@@ -18,9 +21,12 @@ from cuml.cluster import HDBSCAN
 from bertopic import BERTopic
 from bertopic.vectorizers import ClassTfidfTransformer, OnlineCountVectorizer
 
-
 from sciencenow.data.arxivprocessor import ArxivProcessor
 from sciencenow.utils.wrappers import Dimensionality, River, chunk_list
+
+from octis.dataset.dataset import Dataset
+from octis.evaluation_metrics.diversity_metrics import TopicDiversity
+from octis.evaluation_metrics.coherence_metrics import Coherence
 
 
 # run this in ScienceNOW directory
@@ -52,6 +58,8 @@ setup_params = {
     "nr_topics": None,
     "nr_bins": 52, # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
     "nr_chunks": 52, # number of chunks the documents should be split up into for online learning, set to 52 for 52 weeks per year
+    "evolution_tuning": False, # For dynamic model
+    "global_tuning": False, # For dynamic model
 }
 
 online_params = {# For online DBSTREAM https://riverml.xyz/latest/api/cluster/DBSTREAM/
@@ -118,6 +126,15 @@ class ModelWrapper():
         self.probs = None
         self.topic_info = None
         self.topics_over_time = None
+        #### Evaluation
+        self.model_name = "BERTopic"
+        self.topk = 5
+        # prepare data and metrics
+        self.data = self.get_dataset()
+        self.metrics = self.get_metrics()
+        self.verbose = True
+
+
 
     def generate_tm_vocabulary(self, recompute=True):
         """
@@ -188,7 +205,8 @@ class ModelWrapper():
             ctfidf_model=self.ctfidf_model,
             vectorizer_model=self.vectorizer_model,
             verbose=False,
-            nr_topics=self.setup_params["nr_topics"]
+            nr_topics=self.setup_params["nr_topics"],
+            calculate_probabilities=False,
         )
         print("Setup complete.")
 
@@ -198,11 +216,13 @@ class ModelWrapper():
         """
         if self.topic_model is None:
             warnings.warn("No topic model set up yet. Call `tm_setup` first.")
+        start = time.time()
         if self.model_type == "base":
             docs = self.subset.abstract.tolist()
             embeddings = self.subset_reduced_embeddings
-            self.topics, self.probs = self.topic_model.fit(documents=docs, embeddings=embeddings)
+            self.topics, _ = self.topic_model.fit(documents=docs, embeddings=embeddings)
             self.topic_info = self.topic_model.get_topic_info()
+            self.output_tm = self.get_base_topics()
             print("Base Topic Model fit successfully.")
         elif self.model_type in ["dynamic", "semisupervised"]:
             # Training procedure is the same since both models use timestamps and for semisupervised
@@ -211,14 +231,20 @@ class ModelWrapper():
             docs = self.subset.abstract.tolist()
             embeddings = self.subset_reduced_embeddings
             timestamps = self.subset.v1_datetime.tolist()
-            self.topics, self.probs = self.topic_model.fit_transform(docs, embeddings)
+            self.topics, _ = self.topic_model.fit_transform(docs, embeddings)
             print(f"Fitting dynamic model with {len(timestamps)} timestamps and {self.setup_params['nr_bins']} bins.")
             self.topics_over_time = self.topic_model.topics_over_time(
                 docs, 
                 timestamps, 
-                nr_bins=self.setup_params["nr_bins"]
+                nr_bins=self.setup_params["nr_bins"],
+                evolution_tuning=setup_params["evolution_tuning"],
+                global_tuning=setup_params["global_tuning"],
                 )
             self.topic_info = self.topic_model.get_topic_info()
+            # for evaluation
+            self.output_tm = self.get_dynamic_topics(self.topics_over_time))
+            
+        
         elif self.model_type == "online": # TODO: adapt from script
             # subset is already ordered by datetime
             doclist = self.subset.abstract.tolist()
@@ -234,14 +260,21 @@ class ModelWrapper():
             self.topics_over_time = self.topic_model.topics_over_time(
                 doclist, 
                 timestamps, 
-                nr_bins=self.setup_params["nr_bins"]
+                nr_bins=self.setup_params["nr_bins"],
+                evolution_tuning=setup_params["evolution_tuning"],
+                global_tuning=setup_params["global_tuning"],
                 )
             self.topic_info = self.topic_model.get_topic_info()
-            
+            self.output_tm = self.get_dynamic_topics(self.topics_over_time))
+
         elif self.model_type == "antm": # TODO: adapt from script
             pass
         elif self.model_type == "embetter": # TODO: adapt from script
             pass
+
+        end = time.time()
+        self.computation_time = float(end - start)
+        return self.output_tm, self.computation_time, self.topics
     
     def tm_save(self, name):
         """
@@ -265,3 +298,120 @@ class ModelWrapper():
         self.topic_model = BERTopic.load(Path(self.tm_params.TM_TARGET_ROOT.value) / name)
         print(f"Topic model at {Path(self.tm_params.TM_TARGET_ROOT.value) / name}loaded successfully.")
 
+    def get_dataset(self):
+        """
+        Get dataset in OCTIS format
+        """
+        data = Dataset()
+        data.load_custom_dataset_from_folder(config.EVAL_ROOT)
+        return data
+
+    def get_metrics(self):
+        """
+        Prepare evaluation metrics using OCTIS
+        """
+        npmi = Coherence(texts=self.data.get_corpus(), topk=self.topk, measure="c_npmi")
+        topic_diversity = TopicDiversity(topk=self.topk)
+        # Define methods
+        coherence = [(npmi, "npmi")]
+        diversity = [(topic_diversity, "diversity")]
+        metrics = [(coherence, "Coherence"), (diversity, "Diversity")]
+        return metrics
+
+    def get_dynamic_topics(self, topics_over_time):
+        """
+        Helper method for evaluation of dynamic topic models.
+        """
+        unique_timestamps = topics_over_time.Timestamp.unique()
+        dtm_topics = {}
+        for unique_timestamp in unique_timestamps:
+            dtm_topic = topics_over_time.loc[
+                topics_over_time.Timestamp == unique_timestamp, :
+            ].sort_values("Frequency", ascending=True)
+            dtm_topic = dtm_topic.loc[dtm_topic.Topic != -1, :]
+            dtm_topic = [topic.split(", ") for topic in dtm_topic.Words.values]
+            dtm_topics[unique_timestamp] = {"topics": dtm_topic}
+
+            all_words = [word for words in self.data.get_corpus() for word in words]
+
+            updated_topics = []
+            for topic in dtm_topic:
+                updated_topic = []
+                for word in topic:
+                    if word not in all_words:
+                        # print(word)
+                        updated_topic.append(all_words[0])
+                    else:
+                        updated_topic.append(word)
+                updated_topics.append(updated_topic)
+
+            dtm_topics[unique_timestamp] = {"topics": updated_topics}
+        return dtm_topics
+
+    def get_base_topics(self):
+        """
+        Helper method for evaluation of base model.
+        """
+        all_words = [word for words in self.data.get_corpus() for word in words]
+        bertopic_topics = [
+            [
+                vals[0] if vals[0] in all_words else all_words[0]
+                for vals in self.topic_model.get_topic(i)[:10]
+            ]
+            for i in range(len(set(topics)) - 1)
+        ]
+        output_tm = {"topics": bertopic_topics}
+        return output
+
+    def evaluate(self, output_tm):
+        """
+        Use predefined metrics and output of the topic model to evaluate the tm.
+        """
+        if self.model_type in ["base"]:
+            results = {}
+            for scorers, _ in self.metrics:
+                for scorer, name in scorers:
+                    score = scorer.score(output_tm)
+                    results[name] = float(score)
+            if self.verbose:
+                print("Results")
+                print("============")
+                for metric, score in results.items():
+                    print(f"{metric}: {str(score)}")
+                print(" ")
+        elif self.model_type in ["dynamic", "semisupervised", "online"]:
+            results = {str(timestamp): {} for timestamp, _ in output_tm.items()}
+            for timestamp, topics in output_tm.items():
+                self.metrics = self.get_metrics()
+                for scorers, _ in self.metrics:
+                    for scorer, name in scorers:
+                        score = scorer.score(topics)
+                        results[str(timestamp)][name] = float(score)
+        return results
+
+
+    def train_and_evaluate(self, save: str = False) -> Mapping[str, Any]:
+        """
+        Train a topic model, evaluate it, and return performance metrics.
+        """
+        results = []
+        # setup topic model with specified parameters
+        self.tm_setup()
+        output, computation_time, topics = self.tm_train()
+        scores = self.evaluate(output)
+        # update results 
+        result = {
+            "Dataset": "Arxiv",
+            "Dataset Size": len(self.data.get_corpus()),
+            "Model": "BERTopic",
+            "Params": self.setup_params,
+            "Scores": scores,
+            "Computation Time": computation_time,
+            "Topics": topics,
+        }
+        results.append(result)
+        if save:
+            with open(f"{save}.json", "w") as f:
+                json.dump(results, f)
+        return results
+    
