@@ -25,7 +25,10 @@ setup_params = {
     "mask_probability": 0,
     "recompute": True,
     "nr_topics": None,
-    "nr_bins": 52 # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
+    "nr_bins": 52, # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
+    "nr_chunks": 52, # number of chunks the documents should be split up into for online learning, set to 52 for 52 weeks per year
+    "evolution_tuning": False, # For dynamic model
+    "global_tuning": False, # For dynamic model
 }
 
 model_type = "dynamic"
@@ -47,7 +50,6 @@ assert wrapper.subset_reduced_embeddings.shape == (wrapper.subset.shape[0], wrap
 assert wrapper.tm_vocab is None
 assert wrapper.topic_model is None
 assert wrapper.topics is None
-assert wrapper.probs is None
 assert wrapper.topic_info is None
 assert wrapper.topics_over_time is None
 
@@ -94,7 +96,10 @@ setup_params = {
     "mask_probability": 0.1,
     "recompute": True,
     "nr_topics": None,
-    "nr_bins": 52 # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
+    "nr_bins": 52, # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
+    "nr_chunks": 52, # number of chunks the documents should be split up into for online learning, set to 52 for 52 weeks per year
+    "evolution_tuning": False, # For dynamic model
+    "global_tuning": False, # For dynamic model
 }
 
 model_type = "semisupervised"
@@ -135,14 +140,16 @@ setup_params = {
     "startdate": "01 01 2020", # if no date range should be selected set startdate to `None`
     "enddate":"31 01 2020",
     "target": "cs", # if no taxonomy filtering should be done set target to `None`
-    "threshold": 1,
+    "threshold": 100,
     "labelmatch_subset": None,  # if you want to compare results to another subset of data which may potentially 
                                 # contain labels not present in the first data set this to a data subset.
     "mask_probability": 0.1,
     "recompute": True,
     "nr_topics": None,
     "nr_bins": 4, # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
-    "nr_chunks": 4,
+    "nr_chunks": 4, # number of chunks the documents should be split up into for online learning, set to 52 for 52 weeks per year
+    "evolution_tuning": False, # For dynamic model
+    "global_tuning": False, # For dynamic model
 }
 
 model_type = "online"
