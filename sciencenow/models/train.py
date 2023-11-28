@@ -27,6 +27,7 @@ from sciencenow.utils.wrappers import Dimensionality, River, chunk_list
 from octis.dataset.dataset import Dataset
 from octis.evaluation_metrics.diversity_metrics import TopicDiversity
 from octis.evaluation_metrics.coherence_metrics import Coherence
+import Levenshtein
 
 
 # run this in ScienceNOW directory
@@ -131,6 +132,7 @@ class ModelWrapper():
         self.topk = 5
         # prepare data and metrics
         self.data = self.get_dataset()
+        self.corpus = self.data.get_corpus()
         self.metrics = self.get_metrics()
         self.verbose = True
 
@@ -220,7 +222,7 @@ class ModelWrapper():
         if self.model_type == "base":
             docs = self.subset.abstract.tolist()
             embeddings = self.subset_reduced_embeddings
-            self.topics, _ = self.topic_model.fit(documents=docs, embeddings=embeddings)
+            self.topics, _ = self.topic_model.fit_transform(documents=docs, embeddings=embeddings)
             self.topic_info = self.topic_model.get_topic_info()
             # self.output_tm = self.get_base_topics()
             print("Base Topic Model fit successfully.")
@@ -232,6 +234,10 @@ class ModelWrapper():
             embeddings = self.subset_reduced_embeddings
             timestamps = self.subset.v1_datetime.tolist()
             self.topics, _ = self.topic_model.fit_transform(docs, embeddings)
+            # reassign to hopefully help with topicover time representation
+            # https://github.com/MaartenGr/BERTopic/issues/1593
+            # merge models?
+            self.topic_model.topics_ = self.topics
             print(f"Fitting dynamic model with {len(timestamps)} timestamps and {self.setup_params['nr_bins']} bins.")
             self.topics_over_time = self.topic_model.topics_over_time(
                 docs, 
@@ -310,7 +316,8 @@ class ModelWrapper():
         """
         Prepare evaluation metrics using OCTIS
         """
-        npmi = Coherence(texts=self.data.get_corpus(), topk=self.topk, measure="c_npmi")
+        npmi = Coherence(texts=self.corpus, topk=self.topk, measure="c_npmi")
+        #npmi = Coherence(topk=self.topk, measure="c_npmi")
         topic_diversity = TopicDiversity(topk=self.topk)
         # Define methods
         coherence = [(npmi, "npmi")]
@@ -324,27 +331,36 @@ class ModelWrapper():
         """
         unique_timestamps = topics_over_time.Timestamp.unique()
         dtm_topics = {}
-        for unique_timestamp in unique_timestamps:
+        
+        all_words_cased = [word for words in self.corpus for word in words]
+        all_words_lowercase = [word.lower() for word in all_words_cased]
+        all_words_capitalized = [word.capitalize() for word in all_words_cased]
+        all_words_caps = [word.upper() for word in all_words_cased]
+        for unique_timestamp in tqdm(unique_timestamps):
             dtm_topic = topics_over_time.loc[
                 topics_over_time.Timestamp == unique_timestamp, :
             ].sort_values("Frequency", ascending=True)
             dtm_topic = dtm_topic.loc[dtm_topic.Topic != -1, :]
+            # TODO: investigate why we remove the "outlier" topic
             dtm_topic = [topic.split(", ") for topic in dtm_topic.Words.values]
             dtm_topics[unique_timestamp] = {"topics": dtm_topic}
-
-            all_words = [word for words in self.data.get_corpus() for word in words]
-
+            # replacement is in all words
+            # all words contain capital letters, but topic labels only contain lower case letters
             updated_topics = []
             for topic in dtm_topic:
                 updated_topic = []
                 for word in topic:
-                    if word not in all_words:
-                        # print(word)
-                        updated_topic.append(all_words[0])
+                    if word not in all_words_cased and word not in all_words_lowercase:
+                        # append word with minimal hamming distance from vocabulary
+                        #distances = [Levenshtein.hamming(word.lower(), aword.lower()) for aword in all_words_cased]
+                        #replacement = all_words_cased[np.argmin(distances)]
+                        all_words_cased.append(word)
+                        updated_topic.append(word)
+                        #print(f"Word: {word} Replacement: {replacement}")
+                        print(word)
                     else:
                         updated_topic.append(word)
                 updated_topics.append(updated_topic)
-
             dtm_topics[unique_timestamp] = {"topics": updated_topics}
         return dtm_topics
 
@@ -352,7 +368,7 @@ class ModelWrapper():
         """
         Helper method for evaluation of base model.
         """
-        all_words = [word for words in self.data.get_corpus() for word in words]
+        all_words = [word for words in self.corpus for word in words]
         bertopic_topics = [
             [
                 vals[0] if vals[0] in all_words else all_words[0]
@@ -381,7 +397,8 @@ class ModelWrapper():
                 print(" ")
         elif self.model_type in ["dynamic", "semisupervised", "online"]:
             results = {str(timestamp): {} for timestamp, _ in output_tm.items()}
-            for timestamp, topics in output_tm.items():
+            print(f"Evaluating Coherence and Diversity for {len(results)} timestamps.")
+            for timestamp, topics in tqdm(output_tm.items()):
                 self.metrics = self.get_metrics()
                 for scorers, _ in self.metrics:
                     for scorer, name in scorers:
@@ -409,7 +426,7 @@ class ModelWrapper():
         # update results 
         result = {
             "Dataset": "Arxiv",
-            "Dataset Size": len(self.data.get_corpus()),
+            "Dataset Size": len(self.corpus),
             "Model": "BERTopic",
             "Params": self.setup_params,
             "Scores": scores,
