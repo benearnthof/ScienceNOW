@@ -51,7 +51,7 @@ parser.add_argument("-clust", "--clust", type=int, help="HDBSCAN minimum cluster
 args=parser.parse_args()
 print(args.clust)
 
-results = []
+# results = []
 errors = []
 
 setup_params = {
@@ -74,7 +74,7 @@ setup_params = {
 wrapper = None
 wrapper = ModelWrapper(setup_params=setup_params, model_type="semisupervised")
 try:
-    res = wrapper.train_and_evaluate(save=f"/dss/dssmcmlfs01/pr74ze/pr74ze-dss-0001/ru25jan4/tm_evaluation/{clust}")
+    res = wrapper.train_and_evaluate(save=f"/dss/dssmcmlfs01/pr74ze/pr74ze-dss-0001/ru25jan4/tm_evaluation/{args.clust}")
     # results.append(res)
     del wrapper
     gc.collect()
