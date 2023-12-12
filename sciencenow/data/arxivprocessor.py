@@ -130,7 +130,8 @@ class ArxivProcessor:
             warnings.warn("No date range selected, returning full dataframe.")
             return(self.arxiv_df)
         a, b, c = startdate.split(" ")
-        start = pd.to_datetime(parser.parse(f"{a} {b} {c} 00:00:00 GMT"))
+        # TODO: Why does this only work if we swap b and a for start and end?
+        start = pd.to_datetime(parser.parse(f"{b} {a} {c} 00:00:01 GMT"))
         a, b, c = enddate.split(" ")
         end = pd.to_datetime(parser.parse(f"{a} {b} {c} 23:59:59 GMT"))
         # computing mask takes a moment if the dataframe has lots of rows
@@ -176,6 +177,8 @@ class ArxivProcessor:
         print(f"Building corpus for {len(docs)} documents...")
         with open(fp, "w") as file:
             for document in tqdm(docs):
+                #document = document.encode("utf-8")
+                document = document.encode('utf-8', 'ignore').decode('utf-8')
                 file.write(document + "\n")
         file.close()
         print(f"Successfully built corpus at {fp}")
@@ -340,6 +343,18 @@ class ArxivProcessor:
         subset_filtered = subset_filtered.assign(plaintext_labels= plaintext_labels)
         print(f"Successfully filtered {len(subset)} documents to {len(subset_filtered)} remaining documents.")
         return subset_filtered
+
+    def reduce_subset(self, subset, limit=7500):
+        """"
+        Method to randomly reduce subset to target size to avoid out of memory problems while
+        calulating coherence measures during evaluation
+        """
+        if len(subset) < limit:
+            print("Rows of subset < specified limit.")
+            return subset
+        else:
+            samp = subset.sample(n=limit, replace=False)
+            return samp
 
     def bertopic_setup(self, subset, recompute=False, labels=None):
         """
