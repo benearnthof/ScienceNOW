@@ -10,6 +10,7 @@ from os import getcwd
 from collections import Counter
 from tqdm import tqdm
 import numpy as np
+import pandas as pd
 import random
 import warnings
 from typing import Mapping, Any, List, Tuple
@@ -17,6 +18,7 @@ from typing import Mapping, Any, List, Tuple
 
 from river import cluster
 from sklearn.feature_extraction.text import CountVectorizer
+
 from cuml.cluster import HDBSCAN
 from bertopic import BERTopic
 from bertopic.vectorizers import ClassTfidfTransformer, OnlineCountVectorizer
@@ -28,6 +30,11 @@ from octis.dataset.dataset import Dataset
 from octis.evaluation_metrics.diversity_metrics import TopicDiversity
 from octis.evaluation_metrics.coherence_metrics import Coherence
 import Levenshtein
+
+# for manual coherence calculation
+import gensim.corpora as corpora
+from gensim.models.coherencemodel import CoherenceModel
+from gensim.test.utils import get_tmpfile
 
 
 # run this in ScienceNOW directory
@@ -46,21 +53,29 @@ class TM_PARAMS(Enum):
     TM_TARGET_ROOT=config.TM_TARGET_ROOT
 
 setup_params = {
-    "samples": 30, # hdbscan samples
-    "cluster_size": 30, # hdbscan minimum cluster size
+    "samples": 1, # hdbscan samples
+    "cluster_size": 100, # hdbscan minimum cluster size
     "startdate": "01 01 2020", # if no date range should be selected set startdate to `None`
-    "enddate":"31 12 2020",
+    "enddate": "31 01 2020",
     "target": "cs", # if no taxonomy filtering should be done set target to `None`
-    "threshold": 100,
+    "secondary_target": None, # for synthetic trend extraction
+    "secondary_startdate": "01 01 2020",
+    "secondary_enddate": "31 12 2020",
+    "secondary_proportion": 0.1,
+    "trend_deviation": 1.5, # value between 1 and 2 that determines how much more papers will be in the "trending bins"
+                            # compared to the nontrending bins
+    "n_trends": 1,
+    "threshold": 0,
     "labelmatch_subset": None,  # if you want to compare results to another subset of data which may potentially 
                                 # contain labels not present in the first data set this to a data subset.
     "mask_probability": 0,
     "recompute": True,
     "nr_topics": None,
     "nr_bins": 52, # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
-    "nr_chunks": 52, # number of chunks the documents should be split up into for online learning, set to 52 for 52 weeks per year
+    "nr_chunks": 12, # number of chunks the documents should be split up into for online learning, set to 52 for 52 weeks per year
     "evolution_tuning": False, # For dynamic model
     "global_tuning": False, # For dynamic model
+    "limit": None,
 }
 
 online_params = {# For online DBSTREAM https://riverml.xyz/latest/api/cluster/DBSTREAM/
@@ -103,9 +118,23 @@ class ModelWrapper():
             target=self.setup_params["target"], 
             threshold=self.setup_params["threshold"]
             )
+        if self.setup_params["secondary_target"] is not None:
+            self.secondary_subset = self.processor.filter_by_date_range(
+                startdate=self.setup_params["secondary_startdate"],
+                enddate=self.setup_params["secondary_enddate"]
+            )
+            self.secondary_subset = self.processor.filter_by_taxonomy(
+                subset=self.secondary_subset, 
+                target=self.setup_params["secondary_target"], 
+                threshold=0
+            )
+            self.subset = self.merge_subsets(proportion=self.setup_params["secondary_proportion"])
+
         self.plaintext_labels, self.numeric_labels = self.processor.get_numeric_labels(
             subset = self.subset,
             mask_probability=self.setup_params["mask_probability"])
+        if self.setup_params["limit"] is not None:
+            self.subset = self.processor.reduce_subset(self.subset, limit=self.setup_params["limit"])
         model_types=["base", "dynamic", "semisupervised", "online", "antm", "embetter"]
         if model_type not in model_types:
             raise ValueError(f"Invalid model type. Expected on of {model_types}")
@@ -136,6 +165,56 @@ class ModelWrapper():
         self.metrics = self.get_metrics()
         self.verbose = True
 
+    def merge_subsets(self, proportion=0.1):
+        """
+        Merge a subset of "real" data with a subset of "fake" papers from another category.
+        This will serve as a setup function to simulate the influx of new papers
+        """
+        s1, s2 = self.subset, self.secondary_subset
+        # simplest idea: Insert proportion of s2 into s1
+        # only using papers belonging to one l1 class
+        groups = Counter(s2.plaintext_labels.tolist()).most_common()
+        target_amount = int(len(s1) * proportion)
+        target_set = s2[s2.plaintext_labels==groups[0][0]]
+        if len(target_set) > target_amount:
+            target_set = target_set.sample(n = target_amount)
+            print(f"Selected {target_amount} papers to be merged with subset.")
+            target_set = self.adjust_timestamps(target_set)
+        else:
+            print(f"Selecting {target_amount} papers from multiple classes...")
+            target_set = s2.sample(n = target_amount)
+            target_set = self.adjust_timestamps(target_set)
+        combined_set = pd.concat([s1, target_set])
+        # preserve order of timestamps
+        combined_set = combined_set.sort_values("v1_datetime")
+        return combined_set
+
+ 
+    def adjust_timestamps(self, target_set):
+        """
+        Method to adjust the timestamps of a "fake" dataset to fall in line with the
+        timestamps of a target dataset.
+        """
+        target_timestamps = self.subset.v1_datetime.tolist()
+        bins = self.setup_params["nr_bins"]
+        n_trends = self.setup_params["n_trends"]
+        deviation = self.setup_params["trend_deviation"]
+        multipliers = [1] * (bins- n_trends) + [deviation] * n_trends
+        random.shuffle(multipliers)
+        # normalize so we can calculate how many papers should fall into each bin
+        multipliers = np.array([float(i) / sum(multipliers) for i in multipliers])
+        papers_per_bin = np.rint(multipliers * len(target_set)).astype(int)
+        # make sure that samples will match in length
+        new_set = target_set[0:sum(papers_per_bin)-1]
+        new_timestamps = []
+        binned_timestamps = np.array_split(target_timestamps, bins)
+        for i, n in enumerate(papers_per_bin):
+            sample = random.choices(binned_timestamps[i].tolist(), k=n)
+            new_timestamps.extend(sample)
+        new_timestamps = new_timestamps[0:len(new_set)]
+        assert len(new_timestamps) == len(new_set)
+        new_set.v1_datetime = new_timestamps
+        return(new_set)
 
 
     def generate_tm_vocabulary(self, recompute=True):
@@ -219,13 +298,14 @@ class ModelWrapper():
         if self.topic_model is None:
             warnings.warn("No topic model set up yet. Call `tm_setup` first.")
         start = time.time()
+
         if self.model_type == "base":
             docs = self.subset.abstract.tolist()
             embeddings = self.subset_reduced_embeddings
             self.topics, _ = self.topic_model.fit_transform(documents=docs, embeddings=embeddings)
             self.topic_info = self.topic_model.get_topic_info()
-            # self.output_tm = self.get_base_topics()
             print("Base Topic Model fit successfully.")
+
         elif self.model_type in ["dynamic", "semisupervised"]:
             # Training procedure is the same since both models use timestamps and for semisupervised
             # the reduced embeddings were already recomputed based on the numeric labels while initializing
@@ -247,11 +327,8 @@ class ModelWrapper():
                 global_tuning=setup_params["global_tuning"],
                 )
             self.topic_info = self.topic_model.get_topic_info()
-            # for evaluation
-            # self.output_tm = self.get_dynamic_topics(self.topics_over_time)
             
-        
-        elif self.model_type == "online": # TODO: adapt from script
+        elif self.model_type == "online": 
             # subset is already ordered by datetime
             doclist = self.subset.abstract.tolist()
             doc_chunks = chunk_list(doclist, n=setup_params["nr_chunks"])
@@ -322,7 +399,9 @@ class ModelWrapper():
         # Define methods
         coherence = [(npmi, "npmi")]
         diversity = [(topic_diversity, "diversity")]
-        metrics = [(coherence, "Coherence"), (diversity, "Diversity")]
+        # metrics = [(coherence, "Coherence"), (diversity, "Diversity")]
+        # we will calculate coherence manually to avoid a problem with empty topics
+        metrics = [(diversity, "Diversity")]
         return metrics
 
     def get_dynamic_topics(self, topics_over_time):
@@ -330,12 +409,10 @@ class ModelWrapper():
         Helper method for evaluation of dynamic topic models.
         """
         unique_timestamps = topics_over_time.Timestamp.unique()
-        dtm_topics = {}
-        
-        all_words_cased = [word for words in self.corpus for word in words]
+        dtm_topics = {} 
+        all_words_cased = list(set([word for words in self.corpus for word in words]))
         all_words_lowercase = [word.lower() for word in all_words_cased]
-        all_words_capitalized = [word.capitalize() for word in all_words_cased]
-        all_words_caps = [word.upper() for word in all_words_cased]
+
         for unique_timestamp in tqdm(unique_timestamps):
             dtm_topic = topics_over_time.loc[
                 topics_over_time.Timestamp == unique_timestamp, :
@@ -406,6 +483,48 @@ class ModelWrapper():
                         results[str(timestamp)][name] = float(score)
         return results
 
+    def calculate_coherence(self):
+        """
+        Manually calculating topic coherence to avoid an OCTIS bug that happened with 
+        empty topics.
+        https://github.com/MaartenGr/BERTopic/issues/90
+        """
+        documents = pd.DataFrame({
+            "Document": self.subset.abstract.tolist(),
+            "ID": range(len(self.subset)),
+            "Topic": self.topics
+            })
+        documents_per_topic = documents.groupby(['Topic'], as_index=False).agg({'Document': ' '.join})
+        cleaned_docs = self.topic_model._preprocess_text(documents_per_topic.Document.values)
+        vectorizer = self.topic_model.vectorizer_model
+        analyzer = vectorizer.build_analyzer()
+        words = vectorizer.get_feature_names()
+        # Extract features for Topic Coherence evaluation
+        tokens = [analyzer(doc) for doc in cleaned_docs]
+        dictionary = corpora.Dictionary(tokens)
+        corpus = [dictionary.doc2bow(token) for token in tokens]
+        corpus_output_fname = get_tmpfile("corpus.mm")
+        # save corpus as sparse matrix
+        corpora.MmCorpus.serialize(corpus_output_fname, corpus)
+        mm_corpus = corpora.MmCorpus(corpus_output_fname)
+        # Extract words in each topic if they are non-empty and exist in the dictionary
+        topic_words = []
+        for topic in range(len(set(self.topics))-self.topic_model._outliers):
+            words = list(zip(*self.topic_model.get_topic(topic)))[0]
+            words = [word for word in words if word in dictionary.token2id]
+            topic_words.append(words)
+        topic_words = [words for words in topic_words if len(words) > 0]
+        coherence_model = CoherenceModel(
+            topics=topic_words, 
+            texts=tokens, 
+            corpus=mm_corpus,
+            dictionary=dictionary, 
+            coherence='c_v'
+            )
+        print(f"Calculating coherence for {len(Counter(self.topics))} topics...")
+        coherence = coherence_model.get_coherence()
+        return coherence
+
 
     def train_and_evaluate(self, save: str = False) -> Mapping[str, Any]:
         """
@@ -422,14 +541,17 @@ class ModelWrapper():
             self.output_tm = self.get_dynamic_topics(self.topics_over_time)
 
         print(f"Calculating Scores...")
-        scores = self.evaluate(self.output_tm)
+        diversity = self.evaluate(self.output_tm)
+        coherence = self.calculate_coherence()
         # update results 
         result = {
             "Dataset": "Arxiv",
             "Dataset Size": len(self.corpus),
             "Model": "BERTopic",
             "Params": self.setup_params,
-            "Scores": scores,
+            "OnlineParams": self.online_params,
+            "Diversity": diversity,
+            "Coherence": coherence,
             "Computation Time": computation_time,
             "Topics": topics,
         }
