@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from omegaconf import OmegaConf
 from enum import Enum
-from os import getcwd
+from os import getcwd, listdir
 from collections import Counter
 from tqdm import tqdm
 import numpy as np
@@ -109,27 +109,8 @@ class ModelWrapper():
         self.tm_params = tm_params
         self.setup_params = setup_params
         self.online_params = online_params
-        self.subset = self.processor.filter_by_date_range(
-            startdate=self.setup_params["startdate"],
-            enddate=self.setup_params["enddate"]
-            )
-        self.subset = self.processor.filter_by_taxonomy(
-            subset=self.subset, 
-            target=self.setup_params["target"], 
-            threshold=self.setup_params["threshold"]
-            )
-        if self.setup_params["secondary_target"] is not None:
-            self.secondary_subset = self.processor.filter_by_date_range(
-                startdate=self.setup_params["secondary_startdate"],
-                enddate=self.setup_params["secondary_enddate"]
-            )
-            self.secondary_subset = self.processor.filter_by_taxonomy(
-                subset=self.secondary_subset, 
-                target=self.setup_params["secondary_target"], 
-                threshold=0
-            )
-            self.subset = self.merge_subsets(proportion=self.setup_params["secondary_proportion"])
-
+        # loading subset returns None but assigns subsets
+        self.load_subset()
         self.plaintext_labels, self.numeric_labels = self.processor.get_numeric_labels(
             subset = self.subset,
             mask_probability=self.setup_params["mask_probability"])
@@ -164,6 +145,58 @@ class ModelWrapper():
         self.corpus = self.data.get_corpus()
         self.metrics = self.get_metrics()
         self.verbose = True
+
+    def load_subset(self):
+        """
+        Method that loads a data subset as specified by the setup parameters.
+        If a cache directory is given, subsets will be written to disk at the corresponding
+        location. If a subset exists in the specified location, this subset will be loaded instead.
+        """
+        if self.setup_params["subset_cache"] is not None:
+            # TODO: replace with path variable
+            Path(self.setup_params["subset_cache"]).mkdir(parents=True, exist_ok=True)
+            filelist = listdir(Path(self.setup_params["subset_cache"]))
+            subset_id = self.setup_params["startdate"].replace(" ", "") + self.setup_params["enddate"].replace(" ", "") + ".feather"
+            secondary_subset_id = self.setup_params["secondary_startdate"].replace(" ", "") + self.setup_params["secondary_enddate"].replace(" ", "") + ".feather"
+            merged = subset_id.split(".")[0] + secondary_subset_id
+            # merged subset with fake trends
+            if merged in filelist:
+                print(f"Loading merged subset {merged} from cache...")
+                self.subset = pd.read_feather(Path(self.setup_params["subset_cache"]) / merged)
+            # regular subset with no fake data
+            elif subset_id in filelist:
+                print(f"Loading subset {subset_id} from cache...")
+                self.subset = pd.read_feather(Path(self.setup_params["subset_cache"]) / subset_id)
+            else:
+                self.subset=self.processor.filter_by_date_range(
+                startdate=self.setup_params["startdate"],
+                enddate=self.setup_params["enddate"]
+                )
+                self.subset = self.processor.filter_by_taxonomy(
+                    subset=self.subset, 
+                    target=self.setup_params["target"], 
+                    threshold=self.setup_params["threshold"]
+                )
+                if self.setup_params["secondary_target"] is not None:
+                    self.secondary_subset = self.processor.filter_by_date_range(
+                        startdate=self.setup_params["secondary_startdate"],
+                        enddate=self.setup_params["secondary_enddate"]
+                    )
+                    self.secondary_subset = self.processor.filter_by_taxonomy(
+                        subset=self.secondary_subset, 
+                        target=self.setup_params["secondary_target"], 
+                        threshold=0
+                    )
+                    self.subset = self.merge_subsets(proportion=self.setup_params["secondary_proportion"])
+                    self.subset = self.subset.reset_index()
+                    self.subset.to_feather(Path(self.setup_params["subset_cache"]) / merged)
+                    print(f"Stored subset at {Path(self.setup_params['subset_cache']) / merged}.")
+                # save
+                self.subset = self.subset.reset_index()
+                self.subset.to_feather(Path(self.setup_params["subset_cache"]) / subset_id)
+                print(f"Stored subset at {Path(self.setup_params['subset_cache']) / subset_id}.")
+        else: 
+            warnings.warn("Please specify cache directory to store intermediate dataframes.")
 
     def merge_subsets(self, proportion=0.1):
         """
@@ -262,7 +295,8 @@ class ModelWrapper():
             self.cluster_model = River(
                 model=cluster.DBSTREAM(**self.online_params)
             )
-            self.vectorizer_model = OnlineCountVectorizer(stop_words="english")
+            # set min_df to 5 to avoid running out of memory during coherence calc
+            self.vectorizer_model = OnlineCountVectorizer(min_df=10, stop_words="english")
             # bm25_weighting helps to increase robustness to stop words in smaller online data chunks
             self.ctfidf_model = ClassTfidfTransformer(reduce_frequent_words=True, bm25_weighting=True)
             # need to recompute embeddings for online model
@@ -276,7 +310,7 @@ class ModelWrapper():
                 min_cluster_size=self.setup_params["cluster_size"],
                 verbose=False,
             )
-            self.vectorizer_model = CountVectorizer(stop_words="english")
+            self.vectorizer_model = CountVectorizer(min_df=10, stop_words="english")
             # remove stop words for vectorizer just in case
             self.ctfidf_model = ClassTfidfTransformer(reduce_frequent_words=True)
 
@@ -496,7 +530,9 @@ class ModelWrapper():
             })
         documents_per_topic = documents.groupby(['Topic'], as_index=False).agg({'Document': ' '.join})
         cleaned_docs = self.topic_model._preprocess_text(documents_per_topic.Document.values)
+        # use vectorizer with different min_df to reduce memory requirements
         vectorizer = self.topic_model.vectorizer_model
+        #vectorizer = CountVectorizer(min_df=15, stop_words="english")
         analyzer = vectorizer.build_analyzer()
         words = vectorizer.get_feature_names()
         # Extract features for Topic Coherence evaluation
