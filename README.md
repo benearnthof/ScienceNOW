@@ -35,10 +35,19 @@ We will go over each of these parameters (and other training hyperparameters) in
 
 Setting up the Arxiv Snapshot:  
 To do Topic Modelling we first need to download the metadata of all Arxiv preprints.  
-To accomplish this we use (https://github.com/mattbierbaum/arxiv-public-datasets/tree/master)[https://github.com/mattbierbaum/arxiv-public-datasets/tree/master]
-In combination with the file sciencenow.data.update_arxiv_snapshot.py.  
+To accomplish this we use [https://github.com/mattbierbaum/arxiv-public-datasets/tree/master](https://github.com/mattbierbaum/arxiv-public-datasets/tree/master)  
+In combination with the file `sciencenow.data.update_arxiv_snapshot.py`.  
 Because downloading the data from the OAI takes more than 6 hours (because the OAI returns a maximum of 1000 records every 10 seconds), we combine predownloaded data 
-with new data by utilizing the resumption token obtained while downloading the data for the very first time. 
+with new data by utilizing the resumption token obtained while downloading the data for the very first time.  
 This looks like we still need to run the download at least one time though?  
 Luckily you can download all data up until November of 2023 from here:  
-(https://drive.google.com/drive/folders/1xhLDDFwJauVH5ijRY94xjVRaChc5g5EO?usp=drive_link)[https://drive.google.com/drive/folders/1xhLDDFwJauVH5ijRY94xjVRaChc5g5EO?usp=drive_link]  
+[https://drive.google.com/drive/folders/1xhLDDFwJauVH5ijRY94xjVRaChc5g5EO?usp=drive_link](https://drive.google.com/drive/folders/1xhLDDFwJauVH5ijRY94xjVRaChc5g5EO?usp=drive_link)  
+There you will find most of the files needed to begin topic modelling:  
+* the `ARXIV_SNAPSHOT` as a `.json` file containing the metadata of all Arxiv preprints up including the 13th of November 2023
+* the compressed `arxiv-metadata-oai-2023-11-13.json.gz` which is only needed if you wish to update your data at a later point in time
+* a `.txt` file containint the resumptionToken necessary to do so
+* the precalculated `embeddings.npy` obtained by encoding the preprocessed preprint abstracts with a sentence transformer
+* the precalculated `reduced_embeddings.npy` obtained by using `cuML.manifold.umap` to reduce the embeddings down to only 5 dimensions
+* the preprocessed `arxiv_df.feather` which contains the dataframe used for topic modelling after all preprocessing is done stored as `.feather` to drastically speed up loading of 2.3 million preprints to memory
+Download the files and adjust the respective paths in `secrets.yaml`. It is recommended to leave all these files in a single folder since they will only be written to if the dataset is updated with `sciencenow.data.update_arxiv_snapshot.py`.
+
