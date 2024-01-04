@@ -1,3 +1,4 @@
+import gzip
 from pathlib import Path
 from os import getcwd
 from omegaconf import OmegaConf
@@ -17,12 +18,15 @@ from arxiv_public_data.config import LOGGER, DIR_BASE
 log = LOGGER.getChild('metadata')
 
 
-cfg = Path(getcwd()) / "./sciencenow/config/secrets.yaml"
+cfg = "./sciencenow/config/secrets.yaml"
 config = OmegaConf.load(cfg)
 
 outfile = config.ARXIV_SNAPSHOT + ".gz"
 
 tokenfile = '{}-resumptionToken.txt'.format(outfile)
+
+if not Path(outfile).exists():
+    print(f"Warning: {outfile} does not exist.")
 
 if Path(tokenfile).exists():
     old_token = open(tokenfile, 'r').read()
@@ -77,4 +81,7 @@ def update_arxiv_snapshot(
 
 # old_token = "6854384|2363001"
 
-update_arxiv_snapshot(old_token)
+# update_arxiv_snapshot(old_token)
+
+if __name__=='__main__':
+    update_arxiv_snapshot(old_token)
