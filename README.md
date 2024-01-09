@@ -126,12 +126,15 @@ The Setup Parameters dictionary, necessary to train a basic Topic Model, as well
 * limit: Only relevant for evaluation. Performing evaluation may run into memory problems when calculating topic coherence and diversity measures for large corpora (more than 10000 documents) it is recommended to limit the number of documents considered in evaluation runs to less than 10000. A value of 7500 has proven stable. Defaults to None.
 * subset_cache: A string that specifies a location where subsets of filtered data should be cached in. This speeds up evaluation by a lot since all filtering and preprocessing steps need only be run once. Defaults to None.
 
+##### Online Parameters
+Parameters needed to fit Online Models.  
+* clustering_threshold: Radius around cluster center that represents a cluster. Adjusting this parameter has a similar effect on the number of generated clusters like the `cluster_size` parameter in DTMs. It is a bit less intuitive to tune since the impact of the clustering threshold directly depends on the intervals the UMAP vectors fall into. In most cases values between 1.0 and 1.5 seem to work reasonably well, with smaller values resulting in a larger micro cluster count. Should be tuned by evaluating a range of models on a suitable subset of data first.
+* fading_factor: Parameter > 0 that controls importance of historical data to micro clusters in current batch of data. Defaults to 0.01.
+* cleanup_interval: Time interval between two consecutive time periods when the cleanup process is conducted
+* intersection_factor: Area of the overlap of micro clusters relative to the area covered by micro clusters. Defaults to 0.3.
+* Minimum weight: Minimum weight for a cluster to be considered not "noisy".
 
-online_params = {# For online DBSTREAM https://riverml.xyz/latest/api/cluster/DBSTREAM/
-    "clustering_threshold": 1.0, # radius around cluster center that represents a cluster
-    "fading_factor": 0.01, # parameter that controls importance of historical data to current cluster > 0
-    "cleanup_interval": 2, # time interval between twwo consecutive time periods when the cleanup process is conducted
-    "intersection_factor": 0.3, # area of the overlap of the micro clusters relative to the area cover by micro clusters
-    "minimum_weight": 1.0 # minimum weight for a cluster to be considered not "noisy" 
-}
+For more information about each of these OTM hyperparameters please refer to the DBSTREAM manual here: (https://riverml.xyz/latest/api/cluster/DBSTREAM/)[https://riverml.xyz/latest/api/cluster/DBSTREAM/]  In practice only the clustering threshold has a strong impact on model performance, it is recommended to perform evaluation runs on a subset of data to arrive at a reasonable set of hyperparameters for the task at hand.  
+
+
 
