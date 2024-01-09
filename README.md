@@ -118,15 +118,14 @@ The Setup Parameters dictionary, necessary to train a basic Topic Model, as well
 * labelmatch_subset: (Deprecated) Subset of data the model shall be compared to. May potentially be labelled with a different set of labels.
 * mask_probability: For semi-supervised model. Value between 0 and 1 that specifies how many preprint labels should be masked as 0. Defaults to 0, the fully semi-supervised case. 0.1 will result in 10% of papers being unlabeled, a mask_probability of 1 corresponds to a fully unsupervised model.
 * recompute: Bool that specifies if the precomputed UMAP reduced embeddings should be used for the subset of data of interest or if UMAP should be rerun to recompute the dimensionality reduced document embeddings. It is recommended to recompute the UMAP step based on the chosen subset since running UMAP based on all 2.7 million preprints prior to fitting the topic model may lead to different results.
-* nr_topics: 
-    "nr_topics": None,
-    "nr_bins": 4, # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
-    "nr_chunks": 4, # number of chunks the documents should be split up into for online learning, set to 52 for 52 weeks per year
-    "evolution_tuning": False, # For dynamic model
-    "global_tuning": False, # For dynamic model
-    "limit": None,
-    "subset_cache": "/dss/dssmcmlfs01/pr74ze/pr74ze-dss-0001/ru25jan4/cache/",
-}
+* nr_topics: Parameter that specifies if the amount of topics found by BERTopic should be reduced in case more topics are found than the user desires. Defaults to None. If nr_topics is an integer BERTopic will attempt to bundle Topic Clusters using a hierarchical approach. Usually adjusting `cluster_size` should be sufficient to cut down on the amount of clusters generated in the first place.
+* nr_bins: Number of bins for DTM. The time span specified with start date and end date will be split into `nr_bins` bins of equal size. Can be used to split a full year of data into 52 bins corresponding to one week each. Usually works out of the box but for leap years a bit of care needs to be employed if the beginnings and ends of each bin should fall onto the same day of every week.
+* nr_chunks: Number of chunks the documents should be split up into for online learning. Not equivalent to binning since the amount of documents in each chunk will be kept equal. If time binning should be performed instead for an online model, set nr_chunks to `None` and adjust `nr_bins` accordingly.
+* evolution_tuning: Hyperparameter that specifies, if evolution tuning should be performed to adjust the representation of every topic over time. Relevant only for dynamic model, defaults to False.
+* global_tuning: Hyperparameter that specifies if glboal tuning should be performed to adjust the global topic representation of DMT over time. Relevant only for dynamic model, defaults to False.
+* limit: Only relevant for evaluation. Performing evaluation may run into memory problems when calculating topic coherence and diversity measures for large corpora (more than 10000 documents) it is recommended to limit the number of documents considered in evaluation runs to less than 10000. A value of 7500 has proven stable. Defaults to None.
+* subset_cache: A string that specifies a location where subsets of filtered data should be cached in. This speeds up evaluation by a lot since all filtering and preprocessing steps need only be run once. Defaults to None.
+
 
 online_params = {# For online DBSTREAM https://riverml.xyz/latest/api/cluster/DBSTREAM/
     "clustering_threshold": 1.0, # radius around cluster center that represents a cluster
