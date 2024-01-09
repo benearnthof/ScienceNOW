@@ -78,4 +78,7 @@ This will cut down preprocessing times for 2.7 million abstracts to a couple of 
 
 ### Training and Evaluating Topic Models: 
 
+The main goal of this project is the detection of trends or emerging topics in Arxiv preprints. For this purpose we utilize the time stamps present in the metadata of each preprint. While every preprint comes equipped with potentially multiple different time stamps, the `v1_datetime` corresponds to the first time the preprint was added to the Arxiv, which, like we will discuss below, allows us to order all preprints by their distinct timestamps and bin them by day, week, month, or year. The `v1_datetime` does not match the actual publication date of the respective articles but this does not impact our topic models much since on one hand, most preprints do remain preprints forever, and on the other, the few preprints that do end up getting accepted at journals may get published multiple times in multiple journals which may further muddy the waters in respect to picking the "correct" publication date. Despite these slight discrepancies in the way articles are published and updated on the Arxiv, we are still able to find trends and patterns in the way preprints of certain domains are added to the Arxiv, corresponding to publication deadlines of various journals. Some examples are discussed later on.  
+
+
 
