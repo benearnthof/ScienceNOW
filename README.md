@@ -89,6 +89,8 @@ BERTopic offers three different ways of modeling time dependent documents:
 All of these approaches have different advantages and drawbacks, mainly computational cost when the performance of them needs to be evaluated, but merging multiple models comes with the additional disadvantage that, since the technique was added to BERTopic to allow federated learning to a certain degree, the c-TF-IDF representations of each model are not merged since the tokenizers of both models will have been obtained from different corpora. This renders interpreting the results of merged models rather difficult, since obtaining local topic representations for smaller time bins is then no longer possible. Topics may be similar enough to be merged depending on the hyperparameters chosen, but this gets messy rather quickly when, for example, a fine grained analysis of a full years worth of data should be performed over 52 different time stamps. Both other methods do not suffer from this problem, they are only limited by computational cost, which can be alleviated by doing the heavy lifting up front and caching intermediary results to disk.  
 
 #### Doing the heavy lifting
+As outlined during the setup steps above, a CUDA capable GPU is recommended for some of the preprocessing steps to use BERTopic.  
 
+First of all, the abstracts of each preprint need to be converted into a format that is digestible by computers, for this reason 
 
 
