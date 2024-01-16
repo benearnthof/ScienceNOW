@@ -136,5 +136,32 @@ Parameters needed to fit Online Models.
 
 For more information about each of these OTM hyperparameters please refer to the DBSTREAM manual here: (https://riverml.xyz/latest/api/cluster/DBSTREAM/)[https://riverml.xyz/latest/api/cluster/DBSTREAM/]  In practice only the clustering threshold has a strong impact on model performance, it is recommended to perform evaluation runs on a subset of data to arrive at a reasonable set of hyperparameters for the task at hand.  
 
+#### Topic Model Evaluation
+Assessing the performance of Topic Models is not trivial, as usually collections of relevant documents will be unlabeled or, like it is the case with Arxiv preprints, only fall into broad categories that may overlap or not align reflect the contents of papers perfectly. This problem is doubly relevant for the approach presented here, as the topic clusters obtained by dynamic or online topic modeling will grow and change over the time period of interest. This Leads us to use Normalized Pointwise Mutual Information (NPMI/Coherence), and Topic Diversity, to assess the alignment of obtained clusters with human judgment like presented in the original BERTopic paper, and also use Cluster Purity and "Acuity" as proxy measures of how many of the documents in each cluster fall into the same prior "soft label" from the arxiv taxonomy, and how well the model picks up artificially introduced clusters of "fake" data given the specified hyperparameters. 
 
+As an example one might choose to pick the following set of hyperparameters: 
+```python
+
+from sciencenow.models.train import ModelWrapper 
+
+setup_params = {
+    "samples": 1, # hdbscan samples
+    "cluster_size": 50, # hdbscan minimum cluster size
+    "startdate": str(args.sdate), #"01 01 2021", # if no date range should be selected set startdate to `None`
+    "enddate": str(args.edate), #"31 01 2021",
+    "target": "cs", # if no taxonomy filtering should be done set target to `None`
+    "secondary_target": "q-bio", # for synthetic trend extraction
+    "secondary_startdate": "01 01 2020",
+    "secondary_enddate": "31 12 2020",
+    "secondary_proportion": 0.1,
+    "trend_deviation": 1.5, # value between 1 and 2 that determines how much more papers will be in the "trending bins"
+                            # compared to the nontrending bins
+    "n_trends": 1,
+    "recompute": True,
+    "nr_bins": 4, # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
+}
+    
+wrapper = ModelWrapper(setup_params=setup_params, model_type="semisupervised")
+res = wrapper.train_and_evaluate(save=f"/dss/dssmcmlfs01/pr74ze/pr74ze-dss-0001/ru25jan4/tm_evaluation/{args.dir}/{args.clust}")
+```
 
