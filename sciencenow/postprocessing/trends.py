@@ -88,26 +88,44 @@ class TrendExtractor:
             if any(deviation["Sigma"] >= threshold):
                 candidate_topic_indices.append(i)
 
-        papers = subset.abstract.tolist()
+        # papers = subset.abstract.tolist()
+        indices = subset.index.tolist()
+        ids = subset.id.tolist()
+        titles = subset.title.tolist()
         l1_labels = subset.l1_labels.tolist()
         plaintext_labels = subset.plaintext_labels.tolist()
         timestamps = subset.v1_datetime.tolist()
+        # Return ID instead of abstract
+        # ID to select embeddings for visualization
+        # Title for Title highlighting in 3D plot
 
         candidates = {}
         for candidate_topic in candidate_topic_indices:
-            t_papers = [paper for paper, topic in zip(papers, topics) if topic == candidate_topic]
+            # t_papers = [paper for paper, topic in zip(papers, topics) if topic == candidate_topic]
             t_l1 = [label for label, topic in zip(l1_labels, topics) if topic == candidate_topic]
             t_plaintext = [plain for plain, topic in zip(plaintext_labels, topics) if topic == candidate_topic]
             t_timestamps = [ts for ts, topic in zip(timestamps, topics) if topic == candidate_topic]
+            t_indices = [ts for ts, topic in zip(indices, topics) if topic == candidate_topic]
+            t_ids = [ts for ts, topic in zip(ids, topics) if topic == candidate_topic]
+            t_titles = [ts for ts, topic in zip(titles, topics) if topic == candidate_topic]
             begins = deviations[candidate_topic][deviations[candidate_topic]["Sigma"] >= threshold]
             ends = begins["Timestamp"] + delta
             t_candidates = []
             for begin, end in zip(begins["Timestamp"].tolist(), ends.tolist()):
                 # print(begin, end)
                 cands = [
-                    (paper, ts, l1, plain) for paper, ts, l1, plain in 
-                    zip(t_papers, t_timestamps, t_l1, t_plaintext) if 
-                    ts >= begin and ts <= end]
+                    {
+                        "timestamp":ts,
+                        "l1_label":l1,
+                        "plaintext":plain,
+                        "index":index,
+                        "id":ids,
+                        "title":title,
+                    }
+                    for ts, l1, plain, index, ids, title in 
+                    zip(t_timestamps, t_l1, t_plaintext, t_indices, t_ids, t_titles) if 
+                    ts >= begin and ts <= end
+                    ]
                 t_candidates.extend(cands)
             candidates[candidate_topic] = t_candidates
 
@@ -191,4 +209,3 @@ class TrendExtractor:
 
 # TODO: compare to online model
 # TODO: can we find clusters of documents in the evaluation topic results?
-# TODO: rerun eval with semi supervised averaged embeddings approach
