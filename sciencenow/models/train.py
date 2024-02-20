@@ -29,7 +29,6 @@ from sciencenow.utils.wrappers import Dimensionality, River, chunk_list
 from octis.dataset.dataset import Dataset
 from octis.evaluation_metrics.diversity_metrics import TopicDiversity
 from octis.evaluation_metrics.coherence_metrics import Coherence
-import Levenshtein
 
 # for manual coherence calculation
 import gensim.corpora as corpora
@@ -38,8 +37,10 @@ from gensim.test.utils import get_tmpfile
 
 
 # run this in ScienceNOW directory
-cfg = Path(getcwd()) / "./sciencenow/config/secrets.yaml"
+cfg = Path("/dss/dssmcmlfs01/pr74ze/pr74ze-dss-0001/ru25jan4/ScienceNOW/sciencenow/config/secrets.yaml")
+assert cfg.exists()
 config = OmegaConf.load(cfg)
+
 
 class TM_PARAMS(Enum):
     """
@@ -122,11 +123,11 @@ class ModelWrapper():
         self.model_type = model_type
         if self.model_type == "semisupervised": #recompute embeddings with supervised umap
             self.processor.bertopic_setup(
-                subset=self.subset, recompute=True, labels=self.numeric_labels
+                subset=self.subset, recompute=self.setup_params["recompute"], labels=self.numeric_labels
                 )
         else:
             self.processor.bertopic_setup(
-                subset=self.subset, recompute=True
+                subset=self.subset, recompute=self.setup_params["recompute"]
                 )
         self.subset_reduced_embeddings = self.processor.subset_reduced_embeddings
         #### vocab for evaluation
@@ -303,7 +304,7 @@ class ModelWrapper():
             self.umap_model = self.processor.umap_model
             print(f"Successfully set up online model with umap model: {self.umap_model.n_neighbors} neighbors.")
         else: 
-            self.cluster_model = HDBSCAN( # TODO: add KMEANS & River for online & supervised models
+            self.cluster_model = HDBSCAN(
                 min_samples=self.setup_params["samples"],
                 gen_min_span_tree=True,
                 prediction_data=True,
@@ -384,11 +385,6 @@ class ModelWrapper():
             self.topic_info = self.topic_model.get_topic_info()
             # self.output_tm = self.get_dynamic_topics(self.topics_over_time)
 
-        elif self.model_type == "antm": # TODO: adapt from script
-            pass
-        elif self.model_type == "embetter": # TODO: adapt from script
-            pass
-
         end = time.time()
         self.computation_time = float(end - start)
         return self.computation_time, self.topics
@@ -462,9 +458,6 @@ class ModelWrapper():
                 updated_topic = []
                 for word in topic:
                     if word not in all_words_cased and word not in all_words_lowercase:
-                        # append word with minimal hamming distance from vocabulary
-                        #distances = [Levenshtein.hamming(word.lower(), aword.lower()) for aword in all_words_cased]
-                        #replacement = all_words_cased[np.argmin(distances)]
                         all_words_cased.append(word)
                         updated_topic.append(word)
                         #print(f"Word: {word} Replacement: {replacement}")
