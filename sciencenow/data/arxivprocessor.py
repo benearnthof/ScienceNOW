@@ -21,7 +21,9 @@ from cuml.manifold import UMAP # need the GPU implementation to process 2 millio
 
 
 # run this in ScienceNOW directory
-cfg = Path(getcwd()) / "./sciencenow/config/secrets.yaml"
+# TODO: move config loading to demo file
+cfg = Path("/dss/dssmcmlfs01/pr74ze/pr74ze-dss-0001/ru25jan4/ScienceNOW/sciencenow/config/secrets.yaml")
+assert cfg.exists()
 config = OmegaConf.load(cfg)
 
 class FP(Enum):
@@ -186,7 +188,8 @@ class ArxivProcessor:
     def load_embeddings(self):
         """Loads Embeddings that have been previously saved with `embed_abstracts`"""
         if not self.FP.EMBEDS.value.exists():
-            print(f"No precomputed embeddings found in {self.FP.EMBEDS.value}. Call `embed_abstracts` first.")
+            print(f"No precomputed embeddings found in {self.FP.EMBEDS.value}. Calling `embed_abstracts` first...")
+            self.embed_abstracts()
         else:
             self.embeddings = np.load(self.FP.EMBEDS.value)
             print(f"Successfully loaded embeddings for {self.embeddings.shape[0]} documents.")
@@ -205,11 +208,10 @@ class ArxivProcessor:
             self.embeddings = self.sentence_model.encode(self.arxiv_df["abstract"].tolist(), show_progress_bar=True)
             # embeddings = sentence_model.encode(new["abstract"].tolist(), show_progress_bar=True)
             # saving embeddings to disk
-            if self.FP.EMBEDS.value.exists():
-                print(f"Saving embeddings to disk at {self.FP.EMBEDS.value}...")
-                np.save(self.FP.EMBEDS.value, self.embeddings, allow_pickle=False)
-                # np.save(EMBEDDINGS_PATH, embeddings, allow_pickle=False)
-                print(f"Successfully saved {self.embeddings.shape[0]} embeddings to disk.")
+            print(f"Saving embeddings to disk at {self.FP.EMBEDS.value}...")
+            np.save(self.FP.EMBEDS.value, self.embeddings, allow_pickle=False)
+            # np.save(EMBEDDINGS_PATH, embeddings, allow_pickle=False)
+            print(f"Successfully saved {self.embeddings.shape[0]} embeddings to disk.")
 
     def load_reduced_embeddings(self):
         """Loads reduced embeddings that have been previously saved with `reduce_embeddings`"""
@@ -286,33 +288,37 @@ class ArxivProcessor:
                 Mathematics
         """
         if target is None:
-            warnings.warn("No filter target selected, returning full dataframe.")
-            return subset
+            warnings.warn("No filter target selected, returning full dataframe with plaintext labels.")
+            # return subset
+
         self.load_taxonomy()
-        print(f"Filtering subset to only contain papers related to {target}...")
-        # categories for every paper is a list of categories
-        cats = subset.categories.tolist()
-        cats = [cat[0].split(" ") for cat in tqdm(cats)]
-        mask = []
-        print("Filtering by majority vote...")
-        for item in tqdm(cats): 
-            count = 0
-            for label in item:
-                if label.startswith(f"{target}."):
-                    count += 1
-            if count >= (len(item)/2):
-                mask.append(True)
-            else:
-                mask.append(False)
-        # filter subset with majority mask
-        subset_filtered = subset.loc[mask]
+        if target is not None:
+            print(f"Filtering subset to only contain papers related to {target}...")
+            # categories for every paper is a list of categories
+            cats = subset.categories.tolist()
+            cats = [cat[0].split(" ") for cat in tqdm(cats)]
+            mask = []
+            print("Filtering by majority vote...")
+            for item in tqdm(cats): 
+                count = 0
+                for label in item:
+                    if label.startswith(f"{target}."):
+                        count += 1
+                if count >= (len(item)/2):
+                    mask.append(True)
+                else:
+                    mask.append(False)
+            # filter subset with majority mask
+            subset_filtered = subset.loc[mask]
+        else:
+            subset_filtered = subset
         
         l1_labels = subset_filtered["categories"].to_list()
         l1_hardlabels = []
         # only keep labels relevant to computer science
         for item in tqdm(l1_labels):
             temp = item[0].split(" ")
-            temp = list(filter(lambda a: a.startswith(f"{target}."), temp))
+            temp = list(filter(lambda a: a.startswith(f"{target}.") if target is not None else a, temp)) # add fix for no target
             temp = " ".join(temp)
             l1_hardlabels.append(temp)
         # get a map to obtain label counts to eliminate tiny label groups
@@ -322,8 +328,11 @@ class ArxivProcessor:
         subset_filtered = subset_filtered.assign(l1_labels=l1_hardlabels)
         subset_filtered = subset_filtered.assign(l1_counts=hardlabel_counts)
         # remove papers that fall into a group with counts less than threshold
-        keys = [key for key in self.taxonomy.keys() if key.startswith(f"{target}.")]
-        target_taxonomy = {key:self.taxonomy[key] for key in keys}
+        if target is not None:
+            keys = [key for key in self.taxonomy.keys() if key.startswith(f"{target}.")]
+            target_taxonomy = {key:self.taxonomy[key] for key in keys}
+        else:
+            target_taxonomy = self.taxonomy
         # filter out very small classes
         countmask = [count > threshold for count in hardlabel_counts]
         subset_filtered = subset_filtered.loc[countmask]
@@ -335,7 +344,7 @@ class ArxivProcessor:
             p_labels = []
             for item in labs:
                 tmp = item.split(" ")
-                plaintext_labels = [taxonomy[k] for k in tmp]
+                plaintext_labels = [taxonomy[k] if k in taxonomy else "default" for k in tmp]
                 plaintext_labels = " & ".join(plaintext_labels)
                 p_labels.append(plaintext_labels)
             return p_labels
@@ -364,22 +373,30 @@ class ArxivProcessor:
             recompute: `bool` that specifies if reduced embeddings should be recomputed.
         """
         # `index` column of subset matches the index column in processor.arxiv_df
+        ids = subset.index.tolist()
+        # if not recompute: 
+        # load only reduced embeddings
         if self.embeddings is None:
-            self.load_embeddings()
+            if recompute:
+                self.load_embeddings()
+            elif not recompute:
+                if self.reduced_embeddings is None:
+                    self.load_reduced_embeddings()
+                self.subset_reduced_embeddings = self.reduced_embeddings[ids]
         if self.arxiv_df is None:
             self.load_snapshot()
-        assert self.embeddings.shape[0] == self.arxiv_df.shape[0]
-        ids = subset.index.tolist()
-        self.subset_embeddings = self.embeddings[ids]
+        # assert self.embeddings.shape[0] == self.arxiv_df.shape[0]
+        if recompute:
+            self.subset_embeddings = self.embeddings[ids]
         # need to grant option to recompute reduced embeddings based on subset and labels for supervised models
-        if labels is not None:
-            # if labels are provided we need to recompute either way
-            self.reduce_embeddings(subset=subset, labels=labels)
-            print("Recomputed reduced embeddings with their respective labels.")
-        elif not recompute:
+        if not recompute:
             if self.reduced_embeddings is None:
                 self.load_reduced_embeddings()
             self.subset_reduced_embeddings = self.reduced_embeddings[ids]
+        elif labels is not None:
+            # if labels are provided we need to recompute either way
+            self.reduce_embeddings(subset=subset, labels=labels)
+            print("Recomputed reduced embeddings with their respective labels.")
         else:
             print("Recomputing reduced embeddings for subset...")
             self.reduce_embeddings(subset=subset)
@@ -410,6 +427,8 @@ class ArxivProcessor:
         Params:
             subset: `dataframe` that contains documents with their respective plaintext labels
             mask_probability:  `float` that specifies the proportion of labels to be masked as -1
+        Returns: 
+            Tuple(plaintext_labels, numeric_labels)
         """
         plaintext_labels = subset["plaintext_labels"]
         plaintext_map = {k:v for k, v in zip(set(plaintext_labels), list(range(0, len(set(plaintext_labels)), 1)))}
