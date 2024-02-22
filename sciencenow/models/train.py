@@ -4,28 +4,26 @@ Wrapper class that unifies Topic Model training.
 import json
 import time
 from pathlib import Path
-from omegaconf import OmegaConf
-from enum import Enum
-from os import getcwd, listdir
+from os import listdir
 from collections import Counter
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import random
 import warnings
-from typing import Mapping, Any, List, Tuple
+from typing import (
+    Mapping,
+    Any,
 
+)
 
+# Topic Model and Clustering imports for online model
 from river import cluster
 from sklearn.feature_extraction.text import CountVectorizer
-
-from cuml.cluster import HDBSCAN
 from bertopic import BERTopic
 from bertopic.vectorizers import ClassTfidfTransformer, OnlineCountVectorizer
 
-from sciencenow.data.arxivprocessor import ArxivProcessor
-from sciencenow.utils.wrappers import Dimensionality, River, chunk_list
-
+# Imports for evaluation of topic models
 from octis.dataset.dataset import Dataset
 from octis.evaluation_metrics.diversity_metrics import TopicDiversity
 from octis.evaluation_metrics.coherence_metrics import Coherence
@@ -35,57 +33,22 @@ import gensim.corpora as corpora
 from gensim.models.coherencemodel import CoherenceModel
 from gensim.test.utils import get_tmpfile
 
+# Preprocessing utils
+from sciencenow.data.arxivprocessor import ArxivProcessor
+from sciencenow.utils.wrappers import Dimensionality, River, chunk_list
+from sciencenow.config import (
+    TM_PARAMS,
+    setup_params,
+    online_params,
+)
+# Conditional import for deployment on machines without cuml
 
-# run this in ScienceNOW directory
-cfg = Path("/dss/dssmcmlfs01/pr74ze/pr74ze-dss-0001/ru25jan4/ScienceNOW/sciencenow/config/secrets.yaml")
-assert cfg.exists()
-config = OmegaConf.load(cfg)
+if setup_params["recompute"]:
+    from cuml.cluster import HDBSCAN
+elif not setup_params["recompute"]:
+    from hdbscan import HDBSCAN
 
 
-class TM_PARAMS(Enum):
-    """
-    Wrapper class for Topic Model hyper parameters.
-    Params:
-        VOCAB_THRESHOLD:`int` that specifies how many times a word must occur in the corpus for 
-            it to be contained in the topic model vocabulary. (This is separate from the vocab used for evaluation.)
-    """
-    VOCAB_THRESHOLD=config.VOCAB_THRESHOLD
-    TM_VOCAB_PATH=config.TM_VOCAB_PATH
-    TM_TARGET_ROOT=config.TM_TARGET_ROOT
-
-setup_params = {
-    "samples": 1, # hdbscan samples
-    "cluster_size": 100, # hdbscan minimum cluster size
-    "startdate": "01 01 2020", # if no date range should be selected set startdate to `None`
-    "enddate": "31 01 2020",
-    "target": "cs", # if no taxonomy filtering should be done set target to `None`
-    "secondary_target": None, # for synthetic trend extraction
-    "secondary_startdate": "01 01 2020",
-    "secondary_enddate": "31 12 2020",
-    "secondary_proportion": 0.1,
-    "trend_deviation": 1.5, # value between 1 and 2 that determines how much more papers will be in the "trending bins"
-                            # compared to the nontrending bins
-    "n_trends": 1,
-    "threshold": 0,
-    "labelmatch_subset": None,  # if you want to compare results to another subset of data which may potentially 
-                                # contain labels not present in the first data set this to a data subset.
-    "mask_probability": 0,
-    "recompute": True,
-    "nr_topics": None,
-    "nr_bins": 52, # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
-    "nr_chunks": 12, # number of chunks the documents should be split up into for online learning, set to 52 for 52 weeks per year
-    "evolution_tuning": False, # For dynamic model
-    "global_tuning": False, # For dynamic model
-    "limit": None,
-}
-
-online_params = {# For online DBSTREAM https://riverml.xyz/latest/api/cluster/DBSTREAM/
-    "clustering_threshold": 1.0, # radius around cluster center that represents a cluster
-    "fading_factor": 0.01, # parameter that controls importance of historical data to current cluster > 0
-    "cleanup_interval": 2, # time interval between twwo consecutive time periods when the cleanup process is conducted
-    "intersection_factor": 0.3, # area of the overlap of the micro clusters relative to the area cover by micro clusters
-    "minimum_weight": 1.0 # minimum weight for a cluster to be considered not "noisy" 
-}
 
 class ModelWrapper():
     """
@@ -309,9 +272,13 @@ class ModelWrapper():
                 gen_min_span_tree=True,
                 prediction_data=True,
                 min_cluster_size=self.setup_params["cluster_size"],
-                verbose=False,
+                # verbose=False,
             )
-            self.vectorizer_model = CountVectorizer(min_df=10, stop_words="english")
+            # quick fix to make everything run on cpu only for deployment
+            if self.setup_params["recompute"]:
+                self.vectorizer_model = CountVectorizer(min_df=10, stop_words="english")
+            elif not self.setup_params["recompute"]: 
+                self.vectorizer_model = CountVectorizer(stop_words="english")
             # remove stop words for vectorizer just in case
             self.ctfidf_model = ClassTfidfTransformer(reduce_frequent_words=True)
 
@@ -416,7 +383,7 @@ class ModelWrapper():
         Get dataset in OCTIS format
         """
         data = Dataset()
-        data.load_custom_dataset_from_folder(config.EVAL_ROOT)
+        data.load_custom_dataset_from_folder(self.tm_params.EVAL_ROOT.value)
         return data
 
     def get_metrics(self):
@@ -478,10 +445,10 @@ class ModelWrapper():
                 vals[0] if vals[0] in all_words else all_words[0]
                 for vals in self.topic_model.get_topic(i)[:10]
             ]
-            for i in range(len(set(topics)) - 1)
+            for i in range(len(set(self.topic_model.topics_)) - 1)
         ]
         output_tm = {"topics": bertopic_topics}
-        return output
+        return output_tm
 
     def evaluate(self, output_tm):
         """

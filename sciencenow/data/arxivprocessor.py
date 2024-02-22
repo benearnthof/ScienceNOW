@@ -7,7 +7,6 @@ from pathlib import Path
 from tqdm import tqdm
 import numpy as np
 from dateutil import parser
-from omegaconf import OmegaConf
 from collections import Counter 
 from os import getcwd
 import warnings
@@ -17,29 +16,19 @@ from sentence_transformers import SentenceTransformer
 # from umap import UMAP
 from sklearn.feature_extraction.text import CountVectorizer
 
-from cuml.manifold import UMAP # need the GPU implementation to process 2 million embeddings
+from sciencenow.config import (
+    FP, 
+    PARAMS,
+    setup_params,
+)
+# Make version of UMAP dependent to config so we can choose the correct version depending on the deployment 
 
+if setup_params["recompute"]:
+    from cuml.manifold import UMAP # need the GPU implementation to process 2 million embeddings
+elif not setup_params["recompute"]:
+    from umap import UMAP
 
 # run this in ScienceNOW directory
-# TODO: move config loading to demo file
-cfg = Path("/dss/dssmcmlfs01/pr74ze/pr74ze-dss-0001/ru25jan4/ScienceNOW/sciencenow/config/secrets.yaml")
-assert cfg.exists()
-config = OmegaConf.load(cfg)
-
-class FP(Enum):
-    SNAPSHOT = Path(config.ARXIV_SNAPSHOT)
-    EMBEDS = Path(config.EMBEDDINGS)
-    REDUCED_EMBEDS = Path(config.REDUCED_EMBEDDINGS)
-    FEATHER = Path(config.FEATHER_PATH)
-    TAXONOMY = Path(config.TAXONOMY_PATH)
-    VOCAB = Path(config.VOCAB_PATH)
-    CORPUS = Path(config.CORPUS_PATH)
-
-class PARAMS(Enum):
-    SENTENCE_MODEL = config.SENTENCE_MODEL
-    UMAP_NEIGHBORS = config.UMAP_NEIGHBORS
-    UMAP_COMPONENTS = config.UMAP_COMPONENTS
-    UMAP_METRIC = config.UMAP_METRIC
 
 LABEL_MAP = {
     "stat": "Statistics",
