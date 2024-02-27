@@ -66,8 +66,8 @@ setup_params = {
     "mask_probability": 0,
     "recompute": False,
     "nr_topics": None,
-    "nr_bins": 52, # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
-    "nr_chunks": 12, # number of chunks the documents should be split up into for online learning, set to 52 for 52 weeks per year
+    "nr_bins": 4, # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
+    "nr_chunks": 4, # number of chunks the documents should be split up into for online learning, set to 52 for 52 weeks per year
     "evolution_tuning": False, # For dynamic model
     "global_tuning": False, # For dynamic model
     "limit": None,

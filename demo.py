@@ -64,6 +64,7 @@ np.save(processor.FP.REDUCED_EMBEDS.value, processor.subset_reduced_embeddings, 
 from sciencenow.models.train import ModelWrapper
 from sciencenow.config import setup_params, online_params
 
+setup_params["recompute"] = True
 wrapper = ModelWrapper(setup_params=setup_params, model_type="semisupervised")
 
 # This does the following: 
@@ -91,7 +92,7 @@ out = wrapper.topic_model.visualize_documents(
     embeddings=wrapper.processor.subset_reduced_embeddings
 )
 
-out.write_html("/dss/dssmcmlfs01/pr74ze/pr74ze-dss-0001/ru25jan4/all-distilroberta-v1/viz_docs.html")
+out.write_html("C:\\Users\\Bene\\Desktop\\viz_docs.html")
 
 
 

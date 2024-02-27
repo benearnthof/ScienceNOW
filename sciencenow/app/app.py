@@ -61,8 +61,15 @@ def predict(*args):
     Then trains topic model and outputs results
     """
     setup_dict = parse_inputs(args)
-    wrapper = wrapper_setup(setup_dict)
-    return wrapper.setup_params
+    wrap = wrapper_setup(setup_dict)
+    wrap.tm_setup()
+    _ = wrap.tm_train()
+    out = wrap.topic_model.visualize_documents(
+        wrap.subset.title.tolist(),
+        embeddings=wrapper.processor.subset_reduced_embeddings
+    )
+    # out.write_html("C:\\Users\\Bene\\Desktop\\viz_docs.html")
+    return out
 
 # build interface 
 with gr.Blocks() as demo:
@@ -73,7 +80,7 @@ with gr.Blocks() as demo:
                 with gr.TabItem("Primary Data"):
                     with gr.Row():
                         startdate = gr.Textbox(value="01 01 2020", label="Start Date of Period", placeholder="Format: Day Month Year")
-                        enddate = gr.Textbox(value="31 01 2020", label="Start Date of Period", placeholder="Format: Day Month Year")
+                        enddate = gr.Textbox(value="31 01 2020", label="End Date of Period", placeholder="Format: Day Month Year")
                     with gr.Row():
                         hdbscan = gr.Slider(minimum=1, maximum=200, value=25, label="HDBSCAN Cluster Size")
                     with gr.Row():
@@ -97,8 +104,8 @@ with gr.Blocks() as demo:
                     with gr.Row():
                         trend_deviation = gr.Number(value=1.5, label="Deviation of Synthetic Trend", minimum=1, maximum=3)
                 submit_button = gr.Button("Submit")
-        with gr.Column():
-            output_placeholder=gr.Textbox()
+        with gr.Column(scale=5):
+            output_placeholder=gr.Plot()
     submit_button.click(
             predict, 
             inputs =
@@ -124,11 +131,5 @@ with gr.Blocks() as demo:
 
 demo.launch()
 
-# Next steps: 
-# Run Model with input parameters
-# extract outputs
-# visualize in 3d scatter plot
-# https://www.gradio.app/docs/plot
-# https://github.com/MaartenGr/BERTopic/blob/257c4b5c0a80606acefc57339e713556dd94a1e6/bertopic/plotting/_topics.py#L11
-# https://plotly.github.io/plotly.py-docs/generated/plotly.graph_objects.Scatter3d.html
-# https://plotly.com/python/3d-scatter-plots/
+# TODO:
+# extract trends in 2nd tab
