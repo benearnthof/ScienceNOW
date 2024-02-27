@@ -4,5 +4,6 @@ from .config import (
     PARAMS,
     TM_PARAMS,
     setup_params,
-    online_params
+    online_params,
+    gradio_setup_params,
 )

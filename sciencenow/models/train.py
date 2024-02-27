@@ -110,6 +110,31 @@ class ModelWrapper():
         self.metrics = self.get_metrics()
         self.verbose = True
 
+    def _reinitialize(self, setup_params):
+        """
+        Method that allows to partially initialize the Model Wrapper object without having to reload 
+        data from disk. This avoids potential memory problems and drastically decreases loading times
+        Params:
+            setup_params: `Dict` of setup parameters that are used to adjust wrapper init
+        """
+        self.setup_params = setup_params
+        # loading subset returns None but assigns subsets
+        self.load_subset()
+        self.plaintext_labels, self.numeric_labels = self.processor.get_numeric_labels(
+            subset = self.subset,
+            mask_probability=self.setup_params["mask_probability"])
+        if self.setup_params["limit"] is not None:
+            self.subset = self.processor.reduce_subset(self.subset, limit=self.setup_params["limit"])
+        self.model_type = "semisupervised"
+        self.processor.bertopic_setup(
+            subset=self.subset, recompute=self.setup_params["recompute"], labels=self.numeric_labels
+            )
+
+        self.subset_reduced_embeddings = self.processor.subset_reduced_embeddings
+        # prepare data and metrics
+        print("Reinitialization with new setup parameters successful.")
+
+
     def load_subset(self):
         """
         Method that loads a data subset as specified by the setup parameters.
@@ -156,7 +181,7 @@ class ModelWrapper():
                     self.subset.to_feather(Path(self.setup_params["subset_cache"]) / merged)
                     print(f"Stored subset at {Path(self.setup_params['subset_cache']) / merged}.")
                 # save
-                self.subset = self.subset.reset_index()
+                self.subset = self.subset.reset_index(drop=True)
                 self.subset.to_feather(Path(self.setup_params["subset_cache"]) / subset_id)
                 print(f"Stored subset at {Path(self.setup_params['subset_cache']) / subset_id}.")
         else: 
