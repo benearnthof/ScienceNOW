@@ -1,10 +1,10 @@
 import time
 from tqdm import tqdm
 import numpy as np
-from typing import List
-from pandas import Timestamp, DataFrame, concat
+from pandas import DataFrame, concat
 import datetime
-from scipy.stats import gmean
+from typing import List, Set
+from math import log2
 
 
 class TrendExtractor:
@@ -18,7 +18,7 @@ class TrendExtractor:
         self.timestamps = model_wrapper.subset.v1_datetime.tolist()
         self.topics_over_time = model_wrapper.topics_over_time
 
-    def extract_linear_trends(self, window=1, threshold=1):
+    def extract_linear_trends(self, threshold=1):
         """
         Every Topic has a number of Timestamps corresponding to the intervals of interest.
         We analyze the frequency of each topic in each timestamp
@@ -37,7 +37,7 @@ class TrendExtractor:
             item_diffs = [i * global_slope for i, count in enumerate(expected_counts)]
             topic_info["GCounts"] = expected_counts + item_diffs
             topic_info["GDiffs"] = topic_info["Frequency"] - topic_info["GCounts"]
-            topic_info["GTrend"] = get_global_trends(data=topic_info["GDiffs"], threshold=threshold)
+            topic_info["GTrend"] = self.get_global_trends(data=topic_info["GDiffs"], threshold=threshold)
             trends.append(topic_info)
         return(trends, slopes)
 
@@ -201,6 +201,122 @@ class TrendExtractor:
             }
         return means, average_frequencies, growth_rates
 
+
+class TrendValidator:
+    """
+    Class that calculates precision & Discounted Cumulative gain for assessment of synthetic Trends.
+    """
+    def __init__(
+        self,
+        results: List[Set[str]],
+        background_docs: List[str],
+        target_docs: List[str],
+    ):
+        self.results = results
+        self.background_docs = set(background_docs)
+        self.target_docs = set(target_docs)
+
+    def precision_at_k(self, k: int, threshold: float = 0.5) -> float:
+        """
+        Calculates the precision at k for the results.
+
+        Parameters:
+        - k (int): The number of results to consider.
+        - threshold (float): The threshold value for trend validation.
+
+        Returns:
+        - float: The precision at k.
+        """
+        true_positives = 0
+        false_positives = 0
+
+        for rank in range(k):
+            trend = self.results[rank]
+            if self._validate_trend(trend, threshold):
+                true_positives += 1
+            else:
+                false_positives += 1
+
+        return true_positives / (true_positives + false_positives)
+
+    def dcg_at_k(self, k: int, normalize=False) -> float:
+        """
+        Discounted cumulative gain (DCG) at k.
+
+        Parameters:
+        k (int): The value of k.
+
+        Returns:
+        float: The DCG value at k.
+        """
+
+        dcg = 0
+        # loop through each item and calculate DCG
+        for rank in range(k):
+            trend = self.results[rank]
+            rel_k = self._get_trend_fraction(trend)
+            # calculate DCG
+            dcg += rel_k / log2(1 + rank + 1)
+
+        # normalize DCG
+        if normalize:
+            dcg /= self.__ideal_dcg_at_k(k)
+
+        return dcg
+
+    @staticmethod
+    def __ideal_dcg_at_k(k: int) -> float:
+        """
+        Calculates the ideal DCG at k.
+
+        Parameters:
+        k (int): The value of k.
+
+        Returns:
+        float: The ideal DCG value at k.
+        """
+        return sum(1 / log2(1 + i + 1) for i in range(k))
+
+    def _validate_trend(self, trend: Set[str], threshold: float) -> bool:
+        """
+        Validates a trend by comparing the trend with the target documents.
+
+        Args:
+            trend (Set[str]): The trend to be validated.
+            threshold (float): The threshold value for the precision.
+
+        Returns:
+            bool: True if the trend is validated, False otherwise.
+        """
+        # Get the intersection of the trend and the target documents
+        intersection = trend.intersection(self.target_docs)
+
+        # Calculate the precision
+        fraction = len(intersection) / len(trend)
+
+        # Return True if the precision is greater than the threshold
+        return fraction >= threshold
+
+    def _get_trend_fraction(self, trend: Set[str]) -> bool:
+        """
+        Validates a trend by comparing the trend with the target documents.
+        Returns the trend fraction.
+
+        Parameters:
+        - trend (Set[str]): The trend to be validated.
+
+        Returns:
+        - bool: The trend fraction.
+
+        """
+        # Get the intersection of the trend and the target documents
+        intersection = trend.intersection(self.target_docs)
+
+        # Calculate the precision
+        fraction = len(intersection) / len(trend)
+
+        # Return True if the precision is greater than the threshold
+        return fraction
 
 
 #extractor = TrendExtractor(docs=data, timestamps=timestamps, topics_over_time=topics_over_time)

@@ -53,7 +53,7 @@ setup_params = {
     "startdate": "01 01 2020", # if no date range should be selected set startdate to `None`
     "enddate": "31 01 2020",
     "target": "cs", # if no taxonomy filtering should be done set target to `None`
-    "secondary_target": None, # for synthetic trend extraction
+    "secondary_target": "q-bio", # for synthetic trend extraction
     "secondary_startdate": "01 01 2020",
     "secondary_enddate": "31 12 2020",
     "secondary_proportion": 0.1,

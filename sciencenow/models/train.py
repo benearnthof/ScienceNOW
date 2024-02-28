@@ -53,11 +53,6 @@ elif not setup_params["recompute"]:
 class ModelWrapper():
     """
     Class to unify setup steps for Topic Model (tm) training. 
-    Params:
-        subset: `dataframe` that contains documents, timestamps and labels
-        tm_params: `TM_PARAMS` enum that contains all hyperparameters
-        setup_params: `Dict` with hyperparameters for model setup
-        model_type: `str`; one of "base", "dynamic", "online", "antm" 
     """
     def __init__(
         self,
@@ -65,9 +60,25 @@ class ModelWrapper():
         setup_params=setup_params,
         online_params=online_params,
         model_type="base",
+        usecache=True,
         ) -> None:
+        """
+        Initialize ModelWrapper Object
+        Will first setup an `ArxivProcessor` to load the snapshot file so we can perform filtering.
+        After initializing all hyperparameters it will then load a subset of data according to the parameters supplied to the model.
+        When completed, steps like calculating numeric labels for semisupervised models and subsampling in case of evaluation
+        are performed with setup of the Topic model and attributes necessary for evaluation to follow.
+
+        Args:
+            subset: `dataframe` that contains documents, timestamps and labels
+            tm_params: `TM_PARAMS` enum that contains all hyperparameters
+            setup_params: `Dict` with hyperparameters for model setup
+            model_type: `str`; one of "base", "dynamic", "online" 
+            usecache: `Bool` that specifies if cache will be used to store subsets or not
+        """
         super().__init__()
         #### Setting up data subset, labels & embeddings via processor
+        self.usecache = usecache
         self.processor = ArxivProcessor()
         self.processor.load_snapshot()
         self.tm_params = tm_params
@@ -80,9 +91,9 @@ class ModelWrapper():
             mask_probability=self.setup_params["mask_probability"])
         if self.setup_params["limit"] is not None:
             self.subset = self.processor.reduce_subset(self.subset, limit=self.setup_params["limit"])
-        model_types=["base", "dynamic", "semisupervised", "online", "antm", "embetter"]
+        model_types=["base", "dynamic", "semisupervised", "online"]
         if model_type not in model_types:
-            raise ValueError(f"Invalid model type. Expected on of {model_types}")
+            raise NotImplementedError(f"Invalid model type. Expected on of {model_types}")
         self.model_type = model_type
         if self.model_type == "semisupervised": #recompute embeddings with supervised umap
             self.processor.bertopic_setup(
@@ -109,6 +120,7 @@ class ModelWrapper():
         self.corpus = self.data.get_corpus()
         self.metrics = self.get_metrics()
         self.verbose = True
+        
 
     def _reinitialize(self, setup_params):
         """
@@ -134,6 +146,29 @@ class ModelWrapper():
         # prepare data and metrics
         print("Reinitialization with new setup parameters successful.")
 
+    def get_id(self, primary=True):
+        """
+        Short helper to return a unique ID for given setup_parameters.
+        Helps with caching.
+        """
+        if not primary:
+        # String that uniquely identifies a synthetic dataset
+            target = str(self.setup_params["secondary_target"])
+            sdate = str(self.setup_params["secondary_startdate"].replace(" ", "_"))
+            edate = str(self.setup_params["secondary_enddate"].replace(" ", "_"))
+            prop = str(self.setup_params["secondary_proportion"])
+            dev = str(self.setup_params["trend_deviation"])
+            n = str(self.setup_params["n_trends"])
+            out = target + "_" + sdate + "_" + edate + "_" + prop + "_" + dev + "_" + n + ".feather"
+            return out
+        else:
+            target = str(self.setup_params["target"])
+            sdate = str(self.setup_params["startdate"])
+            edate = str(self.setup_params["enddate"])
+            t = str(self.setup_params["threshold"])
+            limit = str(self.setup_params["limit"])
+            out = target + "_" + sdate + "_" + edate + "_" + t + "_" + limit
+            return out
 
     def load_subset(self):
         """
@@ -142,18 +177,18 @@ class ModelWrapper():
         location. If a subset exists in the specified location, this subset will be loaded instead.
         """
         if self.setup_params["subset_cache"] is not None:
-            # TODO: replace with path variable
             Path(self.setup_params["subset_cache"]).mkdir(parents=True, exist_ok=True)
             filelist = listdir(Path(self.setup_params["subset_cache"]))
-            subset_id = self.setup_params["startdate"].replace(" ", "") + self.setup_params["enddate"].replace(" ", "") + ".feather"
-            secondary_subset_id = self.setup_params["secondary_startdate"].replace(" ", "") + self.setup_params["secondary_enddate"].replace(" ", "") + ".feather"
+            subset_id = self.get_id(primary=True)
+            secondary_subset_id = self.get_id(primary=False)
             merged = subset_id.split(".")[0] + secondary_subset_id
             # merged subset with fake trends
-            if merged in filelist:
+            if merged in filelist and self.usecache:
                 print(f"Loading merged subset {merged} from cache...")
                 self.subset = pd.read_feather(Path(self.setup_params["subset_cache"]) / merged)
-            # regular subset with no fake data
-            elif subset_id in filelist:
+            # regular subset with no fake data 
+            # If secondary_target is None we don't add a subset of fake data
+            elif subset_id in filelist and self.setup_params["secondary_target"] is None and self.usecache:
                 print(f"Loading subset {subset_id} from cache...")
                 self.subset = pd.read_feather(Path(self.setup_params["subset_cache"]) / subset_id)
             else:
@@ -301,7 +336,7 @@ class ModelWrapper():
             )
             # quick fix to make everything run on cpu only for deployment
             if self.setup_params["recompute"]:
-                self.vectorizer_model = CountVectorizer(min_df=10, stop_words="english")
+                self.vectorizer_model = CountVectorizer(stop_words="english")
             elif not self.setup_params["recompute"]: 
                 self.vectorizer_model = CountVectorizer(stop_words="english")
             # remove stop words for vectorizer just in case

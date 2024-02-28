@@ -64,8 +64,12 @@ np.save(processor.FP.REDUCED_EMBEDS.value, processor.subset_reduced_embeddings, 
 from sciencenow.models.train import ModelWrapper
 from sciencenow.config import setup_params, online_params
 
-setup_params["recompute"] = True
-wrapper = ModelWrapper(setup_params=setup_params, model_type="semisupervised")
+setup_params["target"] = "cs.LG"
+setup_params["cluster_size"] = 6
+setup_params["secondary_target"] = "q-bio"
+setup_params["secondary_proportion"] = 0.2
+setup_params["recompute"] = False
+wrapper = ModelWrapper(setup_params=setup_params, model_type="semisupervised", usecache=True)
 
 # This does the following: 
 # We look for a preprocessed .feather file that is a lot quicker to load from disk than a raw dataframe
@@ -92,7 +96,7 @@ out = wrapper.topic_model.visualize_documents(
     embeddings=wrapper.processor.subset_reduced_embeddings
 )
 
-out.write_html("C:\\Users\\Bene\\Desktop\\viz_docs.html")
+out.write_html("C:\\Users\\Bene\\Desktop\\norecompute_q-bio_vs_cs.LG.html")
 
 
 
@@ -120,3 +124,16 @@ from collections import Counter
 counters = []
 for key in labels:
     counters.append(Counter(labels[key]).most_common())
+
+
+
+
+
+
+
+
+
+
+
+
+subset = processor.filter_by_taxonomy(subset=processor.arxiv_df, target="cs.LG", threshold=0)
