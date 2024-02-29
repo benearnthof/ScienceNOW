@@ -304,9 +304,9 @@ class TrendValidatorIR:
             bool: True if the trend is validated, False otherwise.
         """
         # Get the intersection of the trend and the target documents
-        target_intersection = trend.intersection(target_docs)
-        background_intersection = trend.intersection(background_docs)
-        synth_intersection = trend.intersection(synth_background_docs)
+        target_intersection = trend.intersection(self.target_docs)
+        background_intersection = trend.intersection(self.background_docs)
+        synth_intersection = trend.intersection(self.synth_background_docs)
         # Calculate the precision
         tp_fraction = len(target_intersection) / len(trend)
         bg_fraction = len(background_intersection) / len(trend)

@@ -24,7 +24,19 @@ TM_TARGET_ROOT: "path/for/new/eval" (used to cache topic models during evaluatio
 #### Preprocessing Data
 # Loading the snapshot first
 from sciencenow.data.arxivprocessor import ArxivProcessor
+from sciencenow.models.train import ModelWrapper
+from sciencenow.config import (
+    setup_params,
+    online_params
+)
+
+from sciencenow.postprocessing.trends import (
+    TrendValidatorIR,
+    TrendExtractor
+)
 import numpy as np
+
+
 processor = ArxivProcessor(sort_by_date=True)
 processor.load_snapshot()
 
@@ -61,8 +73,6 @@ np.save(processor.FP.REDUCED_EMBEDS.value, processor.subset_reduced_embeddings, 
 
 #### Using the Model Wrapper for Setup:
 # what happens if we just let the model wrapper do its thing?
-from sciencenow.models.train import ModelWrapper
-from sciencenow.config import setup_params, online_params
 
 setup_params["target"] = "cs.LG"
 setup_params["cluster_size"] = 6
@@ -85,8 +95,6 @@ wrapper = ModelWrapper(setup_params=setup_params, model_type="semisupervised", u
 wrapper.tm_setup()
 _ = wrapper.tm_train()
 # inspecting Diversity and Coherence: 
-
-test = wrapper.subset.groupby(level="l1_labels").size()
 
 # with wrapper.topics we can check how many papers of the additional group got assigned to a topic
 
@@ -113,22 +121,21 @@ counts_background = ds_background.groupby("topic").size()
 # inspecting papers that fell into background class
 bg = ds_synthetic[ds_synthetic["topic"] == -1].title.tolist()
 # they are all related to statistical modelling of pandemics and outbreaks, so pretty realistic for them to be grouped up in a background of 
-['information', 'domains', 'series', 'patient', 'sample', 'properties', 'samples', 'features', 'proposed', 'architecture']
+# ['information', 'domains', 'series', 'patient', 'sample', 'properties', 'samples', 'features', 'proposed', 'architecture']
 
 
 
 # Run the visualization with the original embeddings
-out = wrapper.topic_model.visualize_documents(
-    wrapper.subset.title.tolist(),
-    embeddings=wrapper.processor.subset_reduced_embeddings
-)
+# out = wrapper.topic_model.visualize_documents(
+#     wrapper.subset.title.tolist(),
+#     embeddings=wrapper.processor.subset_reduced_embeddings
+# )
 
-out.write_html("C:\\Users\\Bene\\Desktop\\norecompute_q-bio_vs_cs.LG.html")
+# out.write_html("C:\\Users\\Bene\\Desktop\\norecompute_q-bio_vs_cs.LG.html")
 
 
 
 # let's see if we can identify some trends
-from sciencenow.postprocessing.trends import TrendExtractor
 
 # wrapper.train()
 extractor = TrendExtractor(model_wrapper=wrapper)
@@ -141,16 +148,6 @@ candidates = extractor.get_candidate_papers(
     deviations=deviations,
     threshold=1.5)
 
-# # papers = [x[0] for x in candidates[17]]
-labels = {}
-for key in candidates:
-    labs = [x[3] for x in candidates[key]]
-    labels[key] = labs
-
-from collections import Counter
-counters = []
-for key in labels:
-    counters.append(Counter(labels[key]).most_common())
 
 # we can extract trends with the trend extractor but need to compare them with the evaluator
 # we know a priori how the synthetic trend was injected, we validate with the validator 
@@ -161,11 +158,51 @@ papers_per_bin = wrapper.papers_per_bin
 # papers are already sorted by timestamp
 # so we can just select the correct number of papers from the top of the df as our targets for the respective time stamps
 
+# now we extract the trends with the basic trend extractor
+# and evaluate overlap of all trending classes with the target set
 
+import numpy as np
 
+def extract_max_papers(dataframe, papers_per_bin):
+    cumulative_sums = np.cumsum(papers_per_bin)
+    max_index = np.argmax(cumulative_sums)
+    if max_index == 0:
+        start_index = 0
+    else:
+        start_index = cumulative_sums[max_index - 1]
+    end_index = cumulative_sums[max_index]
+    return dataframe.iloc[start_index:end_index]
 
+target_set = extract_max_papers(ds_synthetic, papers_per_bin)
 
+target_ids = set(target_set.id.tolist())
 
+def extract_ids(dictionary):
+    id_dict = {}
+    for key, list_of_dicts in dictionary.items():
+        for item in list_of_dicts:
+            if key not in id_dict:
+                id_dict[key] = []
+            id_dict[key].append(item['id'])
+    return {key: set(value) for key, value in id_dict.items()}
 
+candidate_ids = extract_ids(candidates)
 
-subset = processor.filter_by_taxonomy(subset=processor.arxiv_df, target="cs.LG", threshold=0)
+# now get background ids to distinguish basic trends from candidates that were missed
+background_ids = set(ds_background.id.tolist()).difference(target_ids)
+synth_background_ids = set(ds_synthetic.id.tolist()).difference(target_ids)
+
+validator = TrendValidatorIR(
+    results=candidate_ids,
+    background_docs=background_ids,
+    synth_background_docs=synth_background_ids,
+    target_docs=target_ids
+)
+
+precisions = [validator.precision_at_k(k) for k in range(len(candidate_ids))]
+dcg_at_ks = [validator.dcg_at_k(k) for k in range(len(candidate_ids))]
+
+# overall performance: How many target ids could be found in trending clusters
+trending_topics = [x for x in candidate_ids]
+counts_synthetic
+counts_background
