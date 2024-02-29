@@ -209,7 +209,7 @@ class TrendValidatorIR:
     """
     def __init__(
         self,
-        results: Dict[Set[str]], # candidate_ids
+        results: Dict[int, Set[str]], # candidate_ids
         background_docs: Set[str], # background_ids
         synth_background_docs: Set[str], # synthetic background ids
         target_docs: Set[str], # target_ids
@@ -252,7 +252,11 @@ class TrendValidatorIR:
             else:
                 true_negatives += 1
 
-        return true_positives / (true_positives + false_positives)
+        total = true_positives + false_positives
+        if total == 0:
+            return 0
+        else:
+            return true_positives / (true_positives + false_positives)
 
     def dcg_at_k(self, k: int, normalize=False) -> float:
         """

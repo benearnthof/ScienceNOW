@@ -20,10 +20,9 @@ TM_VOCAB_PATH: "path/for/new/tm_vocab.txt" (used to cache vocab during evaluatio
 TM_TARGET_ROOT: "path/for/new/eval" (used to cache topic models during evaluation)
 
 """
-
+RECOMPUTE_ALL = False
 #### Preprocessing Data
 # Loading the snapshot first
-from sciencenow.data.arxivprocessor import ArxivProcessor
 from sciencenow.models.train import ModelWrapper
 from sciencenow.config import (
     setup_params,
@@ -36,39 +35,39 @@ from sciencenow.postprocessing.trends import (
 )
 import numpy as np
 
+if RECOMPUTE_ALL:
+    from sciencenow.data.arxivprocessor import ArxivProcessor
+    processor = ArxivProcessor(sort_by_date=True)
+    processor.load_snapshot()
+    # Embed with the sentence transformer of choice
+    # If you're running this for the first time, the processor will download the respective model config and weights to disk first
+    # The processor will then precalculate batches depending on the power of your GPU.
+    # This will also take around 1-2 minutes
+    # after this all 2.7 million abstracts will be encoded to embeddings and saved disk at
+    # "path/for/new/embeddings.npy"
+    # Depending on which model you've chosen the entire process will take anywhere from 40-160 minutes.
+    # Since we already precomputed the embeddings this method will simply load the embeddings from disk.
+    processor.embed_abstracts()
+    # The processor will automatically save the new raw embeddings to the location specified in the config, make sure you have at least 8GB disk space available
 
-processor = ArxivProcessor(sort_by_date=True)
-processor.load_snapshot()
+    # Next we will run the dimensionality reduction
+    # Without subset since we want to reduce the entire corpus
+    # And without labels since for semisupervised models we will have to recompute the UMAP step anyway.
+    # This will take about 10 minutes for 2.3 million documents
+    # We will obtain labels first so we can perform semisupervised models without having to recalculate the embeddings every time
+    # (only for deployment, for evaluation we should recalculate since umap depends on neighborhood structure)
+    # first we need plaintext labels we can convert to numeric labels for umap
+    subset = processor.filter_by_taxonomy(subset=processor.arxiv_df, target=None, threshold=0)
+    plaintext_labels, numeric_labels = processor.get_numeric_labels(subset, 0)
 
-# Embed with the sentence transformer of choice
-# If you're running this for the first time, the processor will download the respective model config and weights to disk first
-# The processor will then precalculate batches depending on the power of your GPU.
-# This will also take around 1-2 minutes
-# after this all 2.7 million abstracts will be encoded to embeddings and saved disk at
-# "path/for/new/embeddings.npy"
-# Depending on which model you've chosen the entire process will take anywhere from 40-160 minutes.
-# Since we already precomputed the embeddings this method will simply load the embeddings from disk.
-processor.embed_abstracts()
-# The processor will automatically save the new raw embeddings to the location specified in the config, make sure you have at least 8GB disk space available
+    # This is usually done in BERTopic setup but we do it manually since we only call reduce_embeddings here
+    ids = subset.index.tolist()
+    processor.subset_embeddings = processor.embeddings[ids]
 
-# Next we will run the dimensionality reduction
-# Without subset since we want to reduce the entire corpus
-# And without labels since for semisupervised models we will have to recompute the UMAP step anyway.
-# This will take about 10 minutes for 2.3 million documents
-# We will obtain labels first so we can perform semisupervised models without having to recalculate the embeddings every time
-# (only for deployment, for evaluation we should recalculate since umap depends on neighborhood structure)
-# first we need plaintext labels we can convert to numeric labels for umap
-subset = processor.filter_by_taxonomy(subset=processor.arxiv_df, target=None, threshold=0)
-plaintext_labels, numeric_labels = processor.get_numeric_labels(subset, 0)
-
-# This is usually done in BERTopic setup but we do it manually since we only call reduce_embeddings here
-ids = subset.index.tolist()
-processor.subset_embeddings = processor.embeddings[ids]
-
-processor.reduce_embeddings(subset=subset, labels=numeric_labels) # This takes about 10 minutes on an A100 40GB
-np.save(processor.FP.REDUCED_EMBEDS.value, processor.subset_reduced_embeddings, allow_pickle=False)
-# These are all the preprocessing steps necessary for running topic models on huge datasets
-# But this can also be performed by just using the ModelWrapper class since it instantiates a processor anyway. 
+    processor.reduce_embeddings(subset=subset, labels=numeric_labels) # This takes about 10 minutes on an A100 40GB
+    np.save(processor.FP.REDUCED_EMBEDS.value, processor.subset_reduced_embeddings, allow_pickle=False)
+    # These are all the preprocessing steps necessary for running topic models on huge datasets
+    # But this can also be performed by just using the ModelWrapper class since it instantiates a processor anyway. 
 
 
 #### Using the Model Wrapper for Setup:
@@ -165,7 +164,7 @@ import numpy as np
 
 def extract_max_papers(dataframe, papers_per_bin):
     cumulative_sums = np.cumsum(papers_per_bin)
-    max_index = np.argmax(cumulative_sums)
+    max_index = np.argmax(papers_per_bin)
     if max_index == 0:
         start_index = 0
     else:
@@ -203,6 +202,14 @@ precisions = [validator.precision_at_k(k) for k in range(len(candidate_ids))]
 dcg_at_ks = [validator.dcg_at_k(k) for k in range(len(candidate_ids))]
 
 # overall performance: How many target ids could be found in trending clusters
-trending_topics = [x for x in candidate_ids]
-counts_synthetic
-counts_background
+
+def compute_union(dictionary_of_sets):
+    union_set = set()
+    for s in dictionary_of_sets.values():
+        union_set |= s
+    return union_set
+
+trending_ids = compute_union(candidate_ids)
+
+trend_intersection = trending_ids.intersection(target_ids)
+overall_performance = len(trend_intersection) / len(trending_ids)
