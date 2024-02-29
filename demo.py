@@ -68,8 +68,8 @@ setup_params["target"] = "cs.LG"
 setup_params["cluster_size"] = 6
 setup_params["secondary_target"] = "q-bio"
 setup_params["secondary_proportion"] = 0.2
-setup_params["recompute"] = False
-wrapper = ModelWrapper(setup_params=setup_params, model_type="semisupervised", usecache=True)
+setup_params["recompute"] = True
+wrapper = ModelWrapper(setup_params=setup_params, model_type="semisupervised", usecache=False)
 
 # This does the following: 
 # We look for a preprocessed .feather file that is a lot quicker to load from disk than a raw dataframe
@@ -86,7 +86,34 @@ wrapper.tm_setup()
 _ = wrapper.tm_train()
 # inspecting Diversity and Coherence: 
 
+test = wrapper.subset.groupby(level="l1_labels").size()
 
+# with wrapper.topics we can check how many papers of the additional group got assigned to a topic
+
+ds = wrapper.subset.copy()
+ds["topic"] = wrapper.topics
+
+ds_synthetic = ds[ds["l1_labels"] == "q-bio.PE"]
+counts_synthetic = ds_synthetic.groupby("topic").size()
+ds_background = ds[ds["l1_labels"] == "cs.LG"]
+counts_background = ds_background.groupby("topic").size()
+
+
+
+# let's inspect background papers
+
+# without recompute 31 qbio papers are sorted into background class -1
+# 31 are sorted into class 0 with data learning models deep as info
+# the rest are sparsely distributed across 17 other classes
+
+# with recompute only 15 of the 102 synthetic papers get sorted into background class
+# only two papers get put into groups they are technically not a member of
+# the rest are all in pure, separate clusters
+
+# inspecting papers that fell into background class
+bg = ds_synthetic[ds_synthetic["topic"] == -1].title.tolist()
+# they are all related to statistical modelling of pandemics and outbreaks, so pretty realistic for them to be grouped up in a background of 
+['information', 'domains', 'series', 'patient', 'sample', 'properties', 'samples', 'features', 'proposed', 'architecture']
 
 
 
@@ -125,9 +152,14 @@ counters = []
 for key in labels:
     counters.append(Counter(labels[key]).most_common())
 
-
-
-
+# we can extract trends with the trend extractor but need to compare them with the evaluator
+# we know a priori how the synthetic trend was injected, we validate with the validator 
+# we have the target timestamps sorted
+target_timestamps = ds_synthetic.v1_datetime.tolist()
+# and can obtain the papers per bin that were sampled from the wrapper
+papers_per_bin = wrapper.papers_per_bin
+# papers are already sorted by timestamp
+# so we can just select the correct number of papers from the top of the df as our targets for the respective time stamps
 
 
 

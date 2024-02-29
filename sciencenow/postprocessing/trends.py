@@ -3,7 +3,7 @@ from tqdm import tqdm
 import numpy as np
 from pandas import DataFrame, concat
 import datetime
-from typing import List, Set
+from typing import List, Set, Dict
 from math import log2
 
 
@@ -202,19 +202,31 @@ class TrendExtractor:
         return means, average_frequencies, growth_rates
 
 
-class TrendValidator:
+class TrendValidatorIR:
     """
     Class that calculates precision & Discounted Cumulative gain for assessment of synthetic Trends.
+    Based on Ideas from Information Retrieval. 
     """
     def __init__(
         self,
-        results: List[Set[str]],
-        background_docs: List[str],
-        target_docs: List[str],
-    ):
-        self.results = results
-        self.background_docs = set(background_docs)
-        self.target_docs = set(target_docs)
+        results: Dict[Set[str]], # candidate_ids
+        background_docs: Set[str], # background_ids
+        synth_background_docs: Set[str], # synthetic background ids
+        target_docs: Set[str], # target_ids
+    ):   
+        """
+        Initialize the Trend Validator
+
+        Args:
+            results: A Dictionary that contains sets of ids of papers that were found to be trending in any time frame. Their Keys correspond to the trend ids of BERTopic
+            background_docs: The set of ids of documents that were non synthetic
+            synth_background_docs: The set of ids of synthetic documents that fell into a time frame not designated as synthetic trend
+            target_docs: The set of ids of synthetic documents that fell into the designated trend time frame
+        """
+        self.results = [x for x in results.values()]
+        self.background_docs = background_docs
+        self.synth_background_docs = synth_background_docs
+        self.target_docs = target_docs
 
     def precision_at_k(self, k: int, threshold: float = 0.5) -> float:
         """
@@ -229,13 +241,16 @@ class TrendValidator:
         """
         true_positives = 0
         false_positives = 0
+        true_negatives = 0
 
         for rank in range(k):
             trend = self.results[rank]
-            if self._validate_trend(trend, threshold):
+            if self._validate_trend(trend, threshold) == "tp":
                 true_positives += 1
-            else:
+            elif self._validate_trend(trend, threshold) == "fp":
                 false_positives += 1
+            else:
+                true_negatives += 1
 
         return true_positives / (true_positives + false_positives)
 
@@ -289,13 +304,24 @@ class TrendValidator:
             bool: True if the trend is validated, False otherwise.
         """
         # Get the intersection of the trend and the target documents
-        intersection = trend.intersection(self.target_docs)
-
+        target_intersection = trend.intersection(target_docs)
+        background_intersection = trend.intersection(background_docs)
+        synth_intersection = trend.intersection(synth_background_docs)
         # Calculate the precision
-        fraction = len(intersection) / len(trend)
-
-        # Return True if the precision is greater than the threshold
-        return fraction >= threshold
+        tp_fraction = len(target_intersection) / len(trend)
+        bg_fraction = len(background_intersection) / len(trend)
+        fp_fraction = len(synth_intersection) / len(trend)
+        # if target intersection is not empty then we did detect a target trend
+        # if synth intersection is empty and target intersection is empty we have a background trend that should not have an impact
+        # if synth intersection is non-empty we have a false positive
+        if tp_fraction >= threshold:
+            return "tp"
+        elif bg_fraction >= threshold:
+            return "tn"
+        elif fp_fraction >= threshold:
+            return "fp"
+        # # Return True if the precision is greater than the threshold
+        # return fraction >= threshold
 
     def _get_trend_fraction(self, trend: Set[str]) -> bool:
         """
@@ -318,10 +344,4 @@ class TrendValidator:
         # Return True if the precision is greater than the threshold
         return fraction
 
-
-#extractor = TrendExtractor(docs=data, timestamps=timestamps, topics_over_time=topics_over_time)
-#trends, slopes = extractor.extract_trends()
-
-
 # TODO: compare to online model
-# TODO: can we find clusters of documents in the evaluation topic results?

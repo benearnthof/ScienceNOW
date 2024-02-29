@@ -256,16 +256,18 @@ class ModelWrapper():
         bins = self.setup_params["nr_bins"]
         n_trends = self.setup_params["n_trends"]
         deviation = self.setup_params["trend_deviation"]
-        multipliers = [1] * (bins- n_trends) + [deviation] * n_trends
-        random.shuffle(multipliers)
+        self.trend_multipliers = [1] * (bins - n_trends) + [deviation] * n_trends
+        random.shuffle(self.trend_multipliers)
         # normalize so we can calculate how many papers should fall into each bin
-        multipliers = np.array([float(i) / sum(multipliers) for i in multipliers])
-        papers_per_bin = np.rint(multipliers * len(target_set)).astype(int)
+        self.trend_multipliers = np.array([float(i) / sum(self.trend_multipliers) for i in self.trend_multipliers])
+        self.papers_per_bin = np.rint(self.trend_multipliers * len(target_set)).astype(int)
+        print(f"PAPERS PER BIN: {self.papers_per_bin}")
+        self.setup_params["papers_per_bin"] = self.papers_per_bin
         # make sure that samples will match in length
-        new_set = target_set[0:sum(papers_per_bin)-1]
+        new_set = target_set[0:sum(self.papers_per_bin)-1]
         new_timestamps = []
         binned_timestamps = np.array_split(target_timestamps, bins)
-        for i, n in enumerate(papers_per_bin):
+        for i, n in enumerate(self.papers_per_bin):
             sample = random.choices(binned_timestamps[i].tolist(), k=n)
             new_timestamps.extend(sample)
         new_timestamps = new_timestamps[0:len(new_set)]

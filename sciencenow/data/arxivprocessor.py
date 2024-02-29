@@ -372,7 +372,7 @@ class ArxivProcessor:
         subset_filtered = subset_filtered.assign(l1_counts=hardlabel_counts)
         # remove papers that fall into a group with counts less than threshold
         if target is not None:
-            keys = [key for key in self.taxonomy.keys() if key.startswith(f"{target}.")]
+            keys = [key for key in self.taxonomy.keys() if key.startswith(f"{target}")]
             target_taxonomy = {key:self.taxonomy[key] for key in keys}
         else:
             target_taxonomy = self.taxonomy
