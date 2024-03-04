@@ -52,7 +52,7 @@ def wrapper_setup(setup_dict: Dict):
     """
     global wrapper
     if wrapper == 0:
-        wrapper = ModelWrapper(setup_params=setup_dict, model_type="semisupervised")
+        wrapper = ModelWrapper(setup_params=setup_dict, model_type="semisupervised", usecache=False)
     elif isinstance(wrapper, ModelWrapper):
         wrapper._reinitialize(setup_params=setup_dict)
     return wrapper

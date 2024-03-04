@@ -201,7 +201,7 @@ class ArxivProcessor:
         docs = subset.abstract.tolist()
         assert all("\n" not in doc for doc in docs)
         print(f"Building corpus for {len(docs)} documents...")
-        with open(fp, "w") as file:
+        with open(fp, "w", encoding='utf-8') as file:
             for document in tqdm(docs):
                 # encode-decode to avoid compatibility problems on different platforms
                 document = document.encode('utf-8', 'ignore').decode('utf-8')
@@ -279,6 +279,7 @@ class ArxivProcessor:
         if subset is not None:
             self.setup_umap_model()
             assert self.subset_embeddings is not None
+            # TODO: This fails if we limit the number of maximum papers in app
             self.subset_reduced_embeddings = self.umap_model.fit_transform(self.subset_embeddings, y=labels)
             print(f"Successfully reduced embeddings of subset from {self.subset_embeddings.shape} to {self.subset_reduced_embeddings.shape}")
         elif self.embeddings is None:
