@@ -368,6 +368,8 @@ class TrendPostprocessor:
         self.extractor = TrendExtractor(model_wrapper=wrapper)
         self.subset = wrapper.subset
         self.topics = wrapper.topics
+        self.topic_info = wrapper.topic_info
+        self.embeddings = wrapper.subset_reduced_embeddings
         self.deviations = self.extractor.calculate_deviations()
         self.papers_per_bin = wrapper.papers_per_bin
         self.target = wrapper.setup_params["secondary_target"]
@@ -455,15 +457,30 @@ class TrendPostprocessor:
             target_docs=target_ids
         )
         # calculate precisions & discounted cumulative gains
-        precisions = [validator.precision_at_k(k) for k in range(len(candidate_ids))]
-        dcg_at_ks = [validator.dcg_at_k(k) for k in range(len(candidate_ids))]
+        precisions = [self.validator.precision_at_k(k) for k in range(len(candidate_ids))]
+        dcg_at_ks = [self.validator.dcg_at_k(k) for k in range(len(candidate_ids))]
         # overall performance: How many target ids could be found in trending clusters
-        trending_ids = compute_union(candidate_ids)
+        trending_ids = self.compute_union(candidate_ids)
         trend_intersection = trending_ids.intersection(target_ids)
         overall_performance = len(trend_intersection) / len(target_ids)
         return {"precisions":precisions, "dcg": dcg_at_ks, "overall_performance": overall_performance}
     
-    def get_trend_info(self):
+    def get_trend_info(self, threshold):
         """
         Method that extracts relevant info for trending papers like Topic & Title
         """
+        candidates = self.get_candidate_papers(threshold=threshold)
+        candidate_ids = self.extract_ids(candidates)
+        trending_ids = self.compute_union(candidate_ids)
+        df = self.subset
+        df["Topic"] = self.topics
+        trend_df = df[df["id"].isin(trending_ids)]
+        # make sure background topic is never trending (does not provide meaningful info)
+        trend_df = trend_df[trend_df["Topic"] != -1]
+        # Get reduced embeddings for each paper so we can visualize them
+        trend_embeddings = self.embeddings[trend_df.index]
+        # Get the topic representation so we can use them to label the plot
+        topic_reps = [self.topic_info[self.topic_info["Topic"]==x].Representation.tolist()[0] for x in trend_df["Topic"].tolist()]
+        # merge trend info with trending df
+        trend_df["Representation"] = topic_reps
+        return trend_df, trend_embeddings
