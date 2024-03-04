@@ -145,7 +145,7 @@ candidates = extractor.get_candidate_papers(
     subset=wrapper.subset,
     topics=wrapper.topics,
     deviations=deviations,
-    threshold=1.5)
+    threshold=1.3)
 
 
 # we can extract trends with the trend extractor but need to compare them with the evaluator
@@ -212,4 +212,7 @@ def compute_union(dictionary_of_sets):
 trending_ids = compute_union(candidate_ids)
 
 trend_intersection = trending_ids.intersection(target_ids)
-overall_performance = len(trend_intersection) / len(trending_ids)
+overall_performance = len(trend_intersection) / len(target_ids)
+
+# TODO: compare to online model
+# we have trending ids, we need to match the trending topics and extract titles for plot

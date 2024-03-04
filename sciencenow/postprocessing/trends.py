@@ -1,10 +1,12 @@
 import time
+import warnings
 from tqdm import tqdm
 import numpy as np
 from pandas import DataFrame, concat
 import datetime
-from typing import List, Set, Dict
+from typing import List, Set, Dict, Tuple
 from math import log2
+
 
 
 class TrendExtractor:
@@ -55,14 +57,14 @@ class TrendExtractor:
         return(trends)
 
     @staticmethod
-    def get_global_trends(data, threshold):
+    def get_global_trends(data, threshold) -> List[str]:
         sd = np.std(data)
         up = data > (sd * threshold)
         down = data < (-sd * threshold)
         trends = ["Up" if x else "Down" if y else "Flat" for x, y in zip(up, down)]
         return (trends)
 
-    def calculate_deviations(self):
+    def calculate_deviations(self) -> List[DataFrame]:
         """
         Simplest Approach: If the topic count drastically differs from the mean of 
         counts over all time stamps we mark it as trending.
@@ -79,7 +81,7 @@ class TrendExtractor:
         return trends
 
     @staticmethod
-    def get_candidate_papers(subset, topics, deviations, threshold=3, delta=datetime.timedelta(days=7)):
+    def get_candidate_papers(subset, topics, deviations, threshold=3, delta=datetime.timedelta(days=7)) -> Dict[Dict]:
         """
         Method to filter papers by timeframes of potentially trending topics
         """
@@ -172,7 +174,7 @@ class TrendExtractor:
             results[topic] = deg_of_diffusion
         return results
 
-    def extract_weak_signals(self):
+    def extract_weak_signals(self) -> Tuple[Dict, Dict, Dict]:
         """
         Weak singnals approach to nowcast current trends.
         Calculates geometric mean of degrees of diffusion for every topic and the respective 
@@ -348,4 +350,120 @@ class TrendValidatorIR:
         # Return True if the precision is greater than the threshold
         return fraction
 
-# TODO: compare to online model
+
+class TrendPostprocessor:
+    """
+    Class that uses Extractor and Validator to extract trending paper IDs from corpus.
+    """
+    def __init__(self, wrapper) -> None:
+        """
+        Initialize the Trend Postprocessor
+
+        Args:
+            wrapper: A ModelWrapper that has been trained and from which we can potentially extract trends.
+            threshold
+        """
+        if wrapper.topics_over_time is None:
+            raise NotImplementedError("Cannot extract trends from untrained model.")
+        self.extractor = TrendExtractor(model_wrapper=wrapper)
+        self.subset = wrapper.subset
+        self.topics = wrapper.topics
+        self.deviations = self.extractor.calculate_deviations()
+        self.papers_per_bin = wrapper.papers_per_bin
+        self.target = wrapper.setup_params["secondary_target"]
+        if self.target is not None:
+            self.ds_synthetic = self.subset[self.subset["l1_labels"].str.startswith(f"{self.target}")]
+        else:
+            self.ds_synthetic = None
+        # pandas: ~ to invert boolean series
+        self.ds_background = self.subset[~self.subset["l1_labels"].str.startswith(f"{self.target}")]
+        self.validator = None
+
+    def get_candidate_papers(self, threshold):
+        """
+        Wrapper method that allows us to pass an arbitrary threshold to 
+        self.extractor.get_candidate_papers
+
+        Args:
+            threshold: Number that specifies how strictly a trend is defined.
+        """
+        candidates = self.extractor.get_candidate_papers(
+            subset=self.subset,
+            topics=self.topics,
+            deviations=self.deviations,
+            threshold=threshold
+        )
+        return candidates
+
+    def extract_max_papers(self):
+        """
+        Helper that first extracts the synthetic papers from the subset and then returns only those
+        rows that were designated as "Trending". => Those rows that fell into the largest bin containing the 
+        artificial influx of papers.
+        """
+        cumulative_sums = np.cumsum(self.papers_per_bin)
+        max_index = np.argmax(self.papers_per_bin)
+        if max_index == 0:
+            start_index = 0
+        else:
+            start_index = cumulative_sums[max_index - 1]
+        end_index = cumulative_sums[max_index]
+        return self.ds_synthetic.iloc[start_index:end_index]
+        
+
+    @staticmethod
+    def extract_ids(dictionary: Dict[List]) -> Dict[Set]:
+        """
+        Will convert a nested dictionary to a dictionary of sets.
+        """
+        id_dict = {}
+        for key, list_of_dicts in dictionary.items():
+            for item in list_of_dicts:
+                if key not in id_dict:
+                    id_dict[key] = []
+                id_dict[key].append(item['id'])
+        return {key: set(value) for key, value in id_dict.items()}
+    
+    @staticmethod
+    def compute_union(dictionary_of_sets):
+        """
+        Compute finite union of countably many sets.
+        """
+        union_set = set()
+        for s in dictionary_of_sets.values():
+            union_set |= s
+        return union_set
+
+    def calculate_performance(self, threshold) -> Dict[List, List, float]:
+        """
+        Method that uses TrendValidatorIR to calculate precisions & DCG
+        Will only run successfully if a synthetic trend has been added to data, else first line returns None
+        """
+        if self.ds_synthetic is None:
+            warnings.warn("No synthetic trends found, skipping performance calculation...")
+            return None
+        target_set = self.extract_max_papers(self.ds_synthetic, self.papers_per_bin)
+        target_ids = set(target_set.id.tolist())
+        candidates = self.get_candidate_papers(threshold=threshold)
+        candidate_ids = self.extract_ids(candidates)
+        background_ids = set(self.ds_background.id.tolist()).difference(target_ids)
+        synth_background_ids = set(self.ds_synthetic.id.tolist()).difference(target_ids)
+        self.validator = TrendValidatorIR(
+            results=candidate_ids,
+            background_docs=background_ids,
+            synth_background_docs=synth_background_ids,
+            target_docs=target_ids
+        )
+        # calculate precisions & discounted cumulative gains
+        precisions = [validator.precision_at_k(k) for k in range(len(candidate_ids))]
+        dcg_at_ks = [validator.dcg_at_k(k) for k in range(len(candidate_ids))]
+        # overall performance: How many target ids could be found in trending clusters
+        trending_ids = compute_union(candidate_ids)
+        trend_intersection = trending_ids.intersection(target_ids)
+        overall_performance = len(trend_intersection) / len(target_ids)
+        return {"precisions":precisions, "dcg": dcg_at_ks, "overall_performance": overall_performance}
+    
+    def get_trend_info(self):
+        """
+        Method that extracts relevant info for trending papers like Topic & Title
+        """

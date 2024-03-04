@@ -276,7 +276,6 @@ class ArxivProcessor:
             subset: subset of data that has been filtered according to the desired specifications
             labels: `np.array` of target labels for semi-supervised modeling
         """
-
         if subset is not None:
             self.setup_umap_model()
             assert self.subset_embeddings is not None
