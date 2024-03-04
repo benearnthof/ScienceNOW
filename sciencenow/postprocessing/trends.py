@@ -8,7 +8,6 @@ from typing import List, Set, Dict, Tuple
 from math import log2
 
 
-
 class TrendExtractor:
     """
     Post processing class we initialize with a model_wrapper that has already been trained.
@@ -81,7 +80,7 @@ class TrendExtractor:
         return trends
 
     @staticmethod
-    def get_candidate_papers(subset, topics, deviations, threshold=3, delta=datetime.timedelta(days=7)) -> Dict[Dict]:
+    def get_candidate_papers(subset, topics, deviations, threshold=3, delta=datetime.timedelta(days=7)):
         """
         Method to filter papers by timeframes of potentially trending topics
         """
@@ -174,7 +173,7 @@ class TrendExtractor:
             results[topic] = deg_of_diffusion
         return results
 
-    def extract_weak_signals(self) -> Tuple[Dict, Dict, Dict]:
+    def extract_weak_signals(self) -> Tuple:
         """
         Weak singnals approach to nowcast current trends.
         Calculates geometric mean of degrees of diffusion for every topic and the respective 
@@ -414,7 +413,7 @@ class TrendPostprocessor:
         
 
     @staticmethod
-    def extract_ids(dictionary: Dict[List]) -> Dict[Set]:
+    def extract_ids(dictionary: Dict) -> Dict:
         """
         Will convert a nested dictionary to a dictionary of sets.
         """
@@ -436,7 +435,7 @@ class TrendPostprocessor:
             union_set |= s
         return union_set
 
-    def calculate_performance(self, threshold) -> Dict[List, List, float]:
+    def calculate_performance(self, threshold) -> Dict:
         """
         Method that uses TrendValidatorIR to calculate precisions & DCG
         Will only run successfully if a synthetic trend has been added to data, else first line returns None
@@ -444,7 +443,7 @@ class TrendPostprocessor:
         if self.ds_synthetic is None:
             warnings.warn("No synthetic trends found, skipping performance calculation...")
             return None
-        target_set = self.extract_max_papers(self.ds_synthetic, self.papers_per_bin)
+        target_set = self.extract_max_papers()
         target_ids = set(target_set.id.tolist())
         candidates = self.get_candidate_papers(threshold=threshold)
         candidate_ids = self.extract_ids(candidates)
@@ -484,3 +483,4 @@ class TrendPostprocessor:
         # merge trend info with trending df
         trend_df["Representation"] = topic_reps
         return trend_df, trend_embeddings
+

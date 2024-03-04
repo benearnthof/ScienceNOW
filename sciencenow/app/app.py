@@ -11,6 +11,12 @@ from sciencenow.config import (
     setup_params, 
 )
 
+from sciencenow.utils.plotting import plot_trending_papers
+
+from sciencenow.postprocessing.trends import (
+    TrendPostprocessor
+)
+
 setup_dict = setup_params.copy()
 
 def parse_inputs(args: List[Any], s_dict: Dict=setup_dict) -> Dict:
@@ -64,12 +70,18 @@ def predict(*args):
     wrap = wrapper_setup(setup_dict)
     wrap.tm_setup()
     _ = wrap.tm_train()
-    out = wrap.topic_model.visualize_documents(
-        wrap.subset.title.tolist(),
-        embeddings=wrapper.processor.subset_reduced_embeddings
-    )
+    # out = wrap.topic_model.visualize_documents(
+    #     wrap.subset.title.tolist(),
+    #     embeddings=wrapper.processor.subset_reduced_embeddings
+    # )
     # out.write_html("C:\\Users\\Bene\\Desktop\\viz_docs.html")
-    return out
+    trend_postprocessor = TrendPostprocessor(wrapper=wrap)
+    # Performance calculations can be done since we added a synthetic subset
+    trend_postprocessor.calculate_performance(threshold=1.5)
+    # TODO: Performance Calculations
+    trend_df, trend_embeddings = trend_postprocessor.get_trend_info(threshold=1.5)
+    fig = plot_trending_papers(trend_df, trend_embeddings)
+    return fig
 
 # build interface 
 with gr.Blocks() as demo:
