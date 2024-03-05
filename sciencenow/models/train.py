@@ -35,6 +35,7 @@ from gensim.test.utils import get_tmpfile
 
 # Preprocessing utils
 from sciencenow.data.arxivprocessor import ArxivProcessor
+from sciencenow.data.synthdata import preprocess_pubmed
 from sciencenow.utils.wrappers import Dimensionality, River, chunk_list
 from sciencenow.config import (
     TM_PARAMS,
@@ -88,7 +89,8 @@ class ModelWrapper():
         self.load_subset()
         self.plaintext_labels, self.numeric_labels = self.processor.get_numeric_labels(
             subset = self.subset,
-            mask_probability=self.setup_params["mask_probability"])
+            mask_probability=self.setup_params["mask_probability"]
+        )
         if self.setup_params["limit"] is not None:
             self.subset = self.processor.reduce_subset(self.subset, limit=self.setup_params["limit"])
         model_types=["base", "dynamic", "semisupervised", "online"]
@@ -96,8 +98,11 @@ class ModelWrapper():
             raise NotImplementedError(f"Invalid model type. Expected on of {model_types}")
         self.model_type = model_type
         if self.model_type == "semisupervised": #recompute embeddings with supervised umap
-            self.processor.bertopic_setup(
-                subset=self.subset, recompute=self.setup_params["recompute"], labels=self.numeric_labels
+            self.processor.bertopic_setup( # should now work
+                subset=self.subset,
+                recompute=self.setup_params["recompute"], 
+                labels=self.numeric_labels,
+                secondary_subset=self.secondary_subset
                 )
         else:
             self.processor.bertopic_setup(
@@ -139,7 +144,10 @@ class ModelWrapper():
             self.subset = self.processor.reduce_subset(self.subset, limit=self.setup_params["limit"])
         self.model_type = "semisupervised"
         self.processor.bertopic_setup(
-            subset=self.subset, recompute=self.setup_params["recompute"], labels=self.numeric_labels
+            subset=self.subset, 
+            recompute=self.setup_params["recompute"], 
+            labels=self.numeric_labels,
+            secondary_subset=self.secondary_subset
             )
 
         self.subset_reduced_embeddings = self.processor.subset_reduced_embeddings
@@ -191,10 +199,10 @@ class ModelWrapper():
             elif subset_id in filelist and self.setup_params["secondary_target"] is None and self.usecache:
                 print(f"Loading subset {subset_id} from cache...")
                 self.subset = pd.read_feather(Path(self.setup_params["subset_cache"]) / subset_id)
-            else:
+            elif self.setup_params["secondary_target"] is not "pubmed":
                 self.subset=self.processor.filter_by_date_range(
-                startdate=self.setup_params["startdate"],
-                enddate=self.setup_params["enddate"]
+                    startdate=self.setup_params["startdate"],
+                    enddate=self.setup_params["enddate"]
                 )
                 self.subset = self.processor.filter_by_taxonomy(
                     subset=self.subset, 
@@ -219,6 +227,23 @@ class ModelWrapper():
                 self.subset = self.subset.reset_index(drop=True)
                 self.subset.to_feather(Path(self.setup_params["subset_cache"]) / subset_id)
                 print(f"Stored subset at {Path(self.setup_params['subset_cache']) / subset_id}.")
+            elif self.setup_params["secondary_target"] == "pubmed": # TODO set flexible flag to allow more datasets
+                self.subset=self.processor.filter_by_date_range(
+                    startdate=self.setup_params["startdate"],
+                    enddate=self.setup_params["enddate"]
+                )
+                self.subset = self.processor.filter_by_taxonomy(
+                    subset=self.subset, 
+                    target=self.setup_params["target"], 
+                    threshold=self.setup_params["threshold"]
+                )
+                # directly load pubmed dataset since we only need to reduce and merge
+                self.secondary_subset = preprocess_pubmed(
+                    target_amount=self.setup_params["secondary_proportion"] * len(self.subset)
+                    )
+                # compute v1_timestamps so we have everything set up for dynamic topic model
+                self.secondary_subset = self.adjust_timestamps(self.secondary_subset)
+                # here we don't merge directly since we need to construct the embeddings by id
         else: 
             warnings.warn("Please specify cache directory to store intermediate dataframes.")
 
@@ -362,7 +387,6 @@ class ModelWrapper():
         if self.topic_model is None:
             warnings.warn("No topic model set up yet. Call `tm_setup` first.")
         start = time.time()
-
         if self.model_type == "base":
             docs = self.subset.abstract.tolist()
             embeddings = self.subset_reduced_embeddings
@@ -374,7 +398,11 @@ class ModelWrapper():
             # Training procedure is the same since both models use timestamps and for semisupervised
             # the reduced embeddings were already recomputed based on the numeric labels while initializing
             # the class
-            docs = self.subset.abstract.tolist()
+            if self.setup_params["secondary_target"] == "pubmed": #TODO: Generalize
+                subset = pd.concat([self.subset, self.secondary_subset])
+                docs = subset.abstract.tolist()
+            else: 
+                docs = self.subset.abstract.tolist()
             embeddings = self.subset_reduced_embeddings
             timestamps = self.subset.v1_datetime.tolist()
             self.topics, _ = self.topic_model.fit_transform(docs, embeddings)
@@ -393,7 +421,7 @@ class ModelWrapper():
             self.topic_info = self.topic_model.get_topic_info()
             
         elif self.model_type == "online": 
-            # subset is already ordered by datetime
+            #TODO: Adjust for synthetic case where subset is not already ordered by datetime
             doclist = self.subset.abstract.tolist()
             doc_chunks = chunk_list(doclist, n=setup_params["nr_chunks"])
             timestamps = self.subset.v1_datetime.tolist()

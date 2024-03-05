@@ -9,6 +9,8 @@ from dateutil import parser
 from collections import Counter 
 import warnings
 import random
+from pathlib import Path
+
 from sentence_transformers import SentenceTransformer
 # from umap import UMAP
 from sklearn.feature_extraction.text import CountVectorizer
@@ -18,6 +20,8 @@ from sciencenow.config import (
     PARAMS,
     setup_params,
 )
+
+from sciencenow.data.synthdata import embedder
 # Make version of UMAP dependent to config so we can choose the correct version depending on the deployment 
 
 if setup_params["recompute"]:
@@ -74,6 +78,7 @@ class ArxivProcessor:
         self.taxonomy = None
         self.subset_embeddings = None
         self.subset_reduced_embeddings = None
+        self.embedder = None
 
     def load_snapshot(self) -> None:
         """
@@ -408,15 +413,18 @@ class ArxivProcessor:
             samp = subset.sample(n=limit, replace=False)
             return samp
 
-    def bertopic_setup(self, subset, recompute=False, labels=None):
+    def bertopic_setup(self, subset, recompute=False, labels=None, secondary_subset=None):
         """
         Method to add reduced embeddings to a subset of documents.
         Params: 
             subset: `dataframe` of documents with ids matching the row number in `self.embeddings` and `self.reduced_embeddings`
             recompute: `bool` that specifies if reduced embeddings should be recomputed.
+            labels: `np.array` of integer labels used for semisupervised UMAP
+            secondary_subset: `dataframe` that is used to load embeddings of synthetic data
         """
         # `index` column of subset matches the index column in processor.arxiv_df
         ids = subset.index.tolist()
+        # load ids of secondary subset in case it is part of synthetic data
         # if not recompute: 
         # load only reduced embeddings
         if self.embeddings is None:
@@ -431,15 +439,39 @@ class ArxivProcessor:
         # assert self.embeddings.shape[0] == self.arxiv_df.shape[0]
         if recompute:
             self.subset_embeddings = self.embeddings[ids]
+            if secondary_subset is not None:
+                if "PUBMED" in secondary_subset.categories.tolist():
+                    # TODO: Generalize to other datasets
+                    secondary_ids = secondary_subset.index.tolist()
+                    # we always recompute with synthetic data
+                    self.embedder = embedder(df=None)
+                    secondary_embeddings = self.embedder.load_embeddings(Path(self.embedder.cfg.PUBMED_EMBEDS))
+                    self.secondary_subset_embeddings = secondary_embeddings[secondary_ids]
+                    # secondary labels is easy since we already have fixed labels in secondary subset we only need to 
+                    # extend the numeric labels by the classes in 
+                    # combining arrays only works if the embeddings have the same shape
+                    assert self.subset_embeddings.shape[1] == self.secondary_subset_embeddings.shape[1]
+                    _, self.secondary_labels = self.get_numeric_labels(secondary_subset, mask_probability=0)
+
         # need to grant option to recompute reduced embeddings based on subset and labels for supervised models
         if not recompute:
+            # we always recompute, this is just for demonstration purposes
             if self.reduced_embeddings is None:
                 self.load_reduced_embeddings()
             self.subset_reduced_embeddings = self.reduced_embeddings[ids]
         elif labels is not None:
-            # if labels are provided we need to recompute either way
-            self.reduce_embeddings(subset=subset, labels=labels)
-            print("Recomputed reduced embeddings with their respective labels.")
+            if self.secondary_labels is None:
+                # if labels are provided we need to recompute either way
+                self.reduce_embeddings(subset=subset, labels=labels)
+                print("Recomputed reduced embeddings with their respective labels.")
+            elif self.secondary_labels:
+                secondary_labs = secondary_labels + max(set(labels)) + 1
+                merged_labs = np.concatenate((labels, secondary_labs))
+                merged_subset = pd.concat([subset, secondary_subset])
+                # now combine embedding arrays
+                self.subset_reduced_embeddings = np.concatenate((self.subset_embeddings, self.secondary_subset_embeddings))
+                # finally calculate reduced embeddings
+                self.reduce_embeddings(subset=merged_subset, labels=merged_labs)
         else:
             print("Recomputing reduced embeddings for subset...")
             self.reduce_embeddings(subset=subset)
