@@ -199,7 +199,7 @@ class ModelWrapper():
             elif subset_id in filelist and self.setup_params["secondary_target"] is None and self.usecache:
                 print(f"Loading subset {subset_id} from cache...")
                 self.subset = pd.read_feather(Path(self.setup_params["subset_cache"]) / subset_id)
-            elif self.setup_params["secondary_target"] is not "pubmed":
+            elif self.setup_params["secondary_target"] != "pubmed":
                 self.subset=self.processor.filter_by_date_range(
                     startdate=self.setup_params["startdate"],
                     enddate=self.setup_params["enddate"]

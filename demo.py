@@ -110,6 +110,6 @@ trend_df, trend_embeddings = trend_postprocessor.get_trend_info(threshold=1.5)
 # Inspect trend_df to see which papers were identified as trending
 # We can now visualize the results
 fig = plot_trending_papers(trend_df, trend_embeddings)
-fig.write_html("C:\\Users\\Bene\\Desktop\\trends.html")
+fig.write_html("C:\\Users\\Bene\\Desktop\\trends2.html")
 
 # TODO: compare to online model
