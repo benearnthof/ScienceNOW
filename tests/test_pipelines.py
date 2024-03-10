@@ -1,4 +1,5 @@
 from pathlib import Path
+from numpy import ndarray
 
 from sciencenow.core.pipelines import (
     PubmedPipeline,
@@ -19,6 +20,8 @@ from sciencenow.core.steps import (
 
 from sciencenow.core.dataset import ArxivDataset
 
+from sciencenow.core.embedding import ArxivEmbedder
+from sciencenow.core.dimensionality import UmapReducer
 
 #### Test Pubmed Pipeline
 path = Path("C:\\Users\\Bene\\Desktop\\testfolder\\Experiments\\all-distilroberta-v1\\arxiv_df.feather")
@@ -67,3 +70,18 @@ assert "v1_datetime" in output.keys()
 assert "l1_labels" in output.keys()
 assert "plaintext_labels" in output.keys()
 assert "numeric_labels" in output.keys()
+
+embedder = ArxivEmbedder(
+    source=None,
+    target=None,
+    data=output["abstract"].tolist()[0:30],
+)
+
+embedder.embed()
+
+assert isinstance(embedder.embeddings, ndarray)
+assert embedder.embeddings.shape == (30, 768)
+
+reducer = UmapReducer()
+
+data = embedder.embeddings

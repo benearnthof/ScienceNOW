@@ -48,6 +48,7 @@ class TM_PARAMS(Enum):
     EVAL_ROOT=config.EVAL_ROOT
 
 setup_params = {
+    "GPU": False, # Specifies which version of UMAP to import
     "samples": 1, # hdbscan samples
     "cluster_size": 25, # hdbscan minimum cluster size
     "startdate": "01 01 2020", # if no date range should be selected set startdate to `None`

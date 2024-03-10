@@ -91,4 +91,10 @@ class ArxivDataset(PubmedDataset):
         self.taxonomy = taxonomy_dict
         print(f"Successfully loaded {len(self.taxonomy)} labels from {path}.")
 
-    
+
+# Every Dataset is defined as a series of preprocessing steps => Pipeline
+# The index of every dataset corresponds to the ID of the embedding vector saved to disk
+# For model preprocessing we need only to load the partially reduced embeddings for the entire dataset
+        # Dimension (2.3 million, 100/200/500/768)
+# Select the corresponding embedding vectors by their indices
+# And then pass them to the reducer object to perform UMAP for the small subset we're interested in.
