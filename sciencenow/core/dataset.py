@@ -1,7 +1,13 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Dict
 from pathlib import Path
 import warnings
+from string import Template
+from collections import Counter
+from random import (
+    shuffle,
+    choices,
+)
 
 from pandas import (
     DataFrame,
@@ -12,7 +18,9 @@ from pandas import (
 from numpy import (
     load as load_array,
     save as save_array,
+    rint as random_int,
     concatenate as concat_array,
+    array_split,
     array,
 )
 
@@ -148,6 +156,7 @@ class DatasetMerger(ABC):
     data: DataFrame
     embeddings: array
 
+    # load and save allow us to do caching in case we already performed setup
     @abstractmethod
     def load(self):
         raise NotImplementedError
@@ -158,6 +167,10 @@ class DatasetMerger(ABC):
     
     @abstractmethod
     def merge(self):
+        raise NotImplementedError
+    
+    @abstractmethod
+    def get_id(self):
         raise NotImplementedError
     
 
@@ -226,6 +239,18 @@ class BasicMerger(DatasetMerger):
         else:
             raise NotImplementedError("Data or embeddings missing, aborting save.")
 
+    def get_id(self, setup_params: Dict[str, Any], primary: bool=True) -> str:
+        """
+        Returns a unique ID for a set of given setup parameter
+        # TODO: Add to load and save functions to automate caching of datasets
+        """
+        if not primary:
+            template = Template("$secondary_target $secondary_startdate $secondary_enddate $secondary_proportion $trend_deviation $n_trends")
+        else: 
+            template = Template("$target $startdate $enddate $threshold $limit")
+        return template.substitute(**setup_params)
+
+
     def merge(self) -> None:
         """
         Basic merge that picks embeddings based on the indices present in Datasets and then 
@@ -252,3 +277,77 @@ class BasicMerger(DatasetMerger):
         # Merger Object merges data and retrieves embeddings
         # Then we need to obtain updated numeric labels
         # Then we can pass the merged embeddings to the UmapReducer class
+
+class SyntheticMerger(BasicMerger):
+    """
+    Extends BasicMerger to be able to handle 
+    
+    Args:
+        source: Dataset trends will be sampled from
+        target: Dataset trends will be added to
+        source_embedder: Embedder providing sentence embeddings for source data
+        target_embedder: Embedder providing sentence embeddings for target data
+    """
+    def __init__(
+            self, 
+            source: Dataset, 
+            target: Dataset, 
+            source_embedder: Embedder, 
+            target_embedder: Embedder
+            ) -> None:
+        super().__init__(source, target, source_embedder, target_embedder)
+        
+        self.papers_per_bin = None
+
+    def merge(self, setup_params: Dict[str, Any]) -> None:
+        """
+        Overwrites basic merge in favor of a custom sampling procedure based on setup parameters.
+        Assumes both source and target dataset already have numeric labels & plaintext labels.
+        At least target dataset must have column "v1_datetime".
+        """
+        target, source = self.target.data, self.source.data
+        # synthetic trend will be sampled from source and added to target
+        # simplest idea: Insert proportion of source into target
+        amount = int(len(target) * setup_params["secondary_proportion"])
+        # we know by setup through steps that the source dataset is large enough to sample from
+        synthetic_set = source.sample(n = amount)
+        print(f"Selected {amount} papers to be merged with subset.")
+        synthetic_set = self.adjust_timestamps(synthetic_set, setup_params)
+        # obtain merged embeddings
+        synthetic_ids = synthetic_set.index.tolist()
+        target_ids = target.index.tolist()
+        synthetic_embeddings = self.source_embedder.embeddings[synthetic_ids]
+        target_embeddings = self.target_embedder.embeddings[target_ids]
+        self.data = concat_dataframe([target, synthetic_set])
+        self.embeddings = concat_array((target_embeddings, synthetic_embeddings)) # TODO: Order should be preserved, need to write test
+
+    def adjust_timestamps(self, synthetic_set: DataFrame, setup_params: Dict[str, Any]) -> None:
+        """
+        Adjusts timestamps of source data to simulate a trend in target data upon merging.
+        Args:
+            setup_params: Dict that specifies how trend will be introduced to the data.
+        """
+        target_timestamps = self.target.v1_datetime.tolist()
+        bins, n_trends, deviation = setup_params["nr_bins"], setup_params["n_trends"], setup_params["trend_deviation"]
+        trend_multipliers = [1] * (bins - n_trends) + [deviation] * n_trends
+        shuffle(trend_multipliers)
+
+        # normalize so we can calculate how many papers should fall into each bin
+        trend_multipliers = array([float(i) / sum(trend_multipliers) for i in trend_multipliers])
+        self.papers_per_bin = random_int(self.trend_multipliers * len(synthetic_set)).astype(int)
+        print(f"PAPERS PER BIN: {self.papers_per_bin}")
+        
+        # make sure that samples will match in length
+        new_set = synthetic_set[0:sum(self.papers_per_bin)-1]
+        new_timestamps = []
+        binned_timestamps = array_split(target_timestamps, bins)
+
+        for i, n in enumerate(self.papers_per_bin):
+            sample = choices(binned_timestamps[i].tolist(), k=n)
+            new_timestamps.extend(sample)
+            
+        new_timestamps = new_timestamps[0:len(new_set)]
+        assert len(new_timestamps) == len(new_set)
+        new_set.v1_datetime = new_timestamps
+        return new_set
+    

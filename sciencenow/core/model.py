@@ -184,7 +184,7 @@ class BERTopicOnline(BERTopicBase):
         self.cluster_model = River(model=DBSTREAM(**cluster_params))
         self.ctfidf_model = ClassTfidfTransformer(reduce_frequent_words=True, bm25_weighting=True)
         self.vectorizer_model = OnlineCountVectorizer(min_df=10, stop_words="english") # min_df to avoid memory problems during eval
-        
+        # TODO: Doublecheck if this is needed, should be handled by init of superclass already
         self.topics = None
         self.topic_info = None
         self.topics_over_time = None

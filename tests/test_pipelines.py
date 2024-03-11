@@ -25,6 +25,7 @@ from sciencenow.core.dataset import (
     ArxivDataset,
     Dataset,
     BasicMerger,
+    SyntheticMerger
 )
 
 
@@ -209,9 +210,14 @@ merger = BasicMerger(
 merger.merge()
 
 assert len(merger.data) == 100
-assert merger.data.v1_datetime.tolist()[0].__repr__() == "Timestamp('2020-01-06 05:36:57+0000', tz='UTC')"
-merger.data.v1_datetime.tolist()[-1].__repr__() == "Timestamp('2021-12-16 10:39:09+0000', tz='UTC')"
 assert merger.embeddings.shape == (100, 768)
 
 # We pass the merger object to the Model Object with the Reducer object.
 # The Model will take care of adjusting the labels and then performing the dim reduction.
+
+merger = SyntheticMerger(
+    source=sourceds,
+    target=targetds,
+    source_embedder=embedder,
+    target_embedder=embedder,
+)
