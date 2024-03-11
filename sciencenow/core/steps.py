@@ -322,7 +322,7 @@ class ArxivReduceSubsetStep(Step):
             return input
         else:
             output = input.sample(n=self.limit, replace=False)
-            return output
+            return output.sort_values("v1_datetime")
 
 
 class ArxivGetNumericLabelsStep(Step):

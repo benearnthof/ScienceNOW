@@ -3,8 +3,18 @@ from typing import Any
 from pathlib import Path
 import warnings
 
-from pandas import DataFrame, read_feather
-from numpy import array
+from pandas import (
+    DataFrame,
+    read_feather,
+    concat as concat_dataframe,
+)
+
+from numpy import (
+    load as load_array,
+    save as save_array,
+    concatenate as concat_array,
+    array,
+)
 
 from sciencenow.core.pipelines import Pipeline
 from sciencenow.core.embedding import ArxivEmbedder, Embedder
@@ -154,14 +164,87 @@ class BasicMerger(DatasetMerger):
     """
     Basic Merger class that just combines the source and target Datasets by concatenation
     """
-    def __init__(self) -> None:
+    def __init__(
+            self,
+            source: Dataset,
+            target: Dataset,
+            source_embedder: Embedder,
+            target_embedder: Embedder,
+            ) -> None:
         super().__init__()
+        self.source = source
+        self.target = target
+        self.source_embedder = source_embedder
+        self.target_embedder = target_embedder
+        self.data = None
+        self.embeddings = None
 
-    def load(self, path):
-        pass
+    def load(self, datapath: str, embedpath: str) -> None:
+        """
+        Load merged dataset from disk.
 
-    def save(self, path):
-        pass
+        Args:
+            datapath: string that specifies where merged data is located on disk.
+            embedpath: string that specifies where respective embeddings are located on disk.
+        """
+        if not datapath:
+            raise NotImplementedError(f"datapath must be provided to load from disk.")
+        if not embedpath: 
+            raise NotImplementedError(f"embedpath must be provided to load from disk")
+        datapath, embedpath = Path(datapath), Path(embedpath)
+        
+        if datapath.exists() and embedpath.exists():
+            if not datapath.suffix == ".feather":
+                raise NotImplementedError(f"Data must be stored in .feather format. Found {datapath.suffix}")
+            if not embedpath.suffix == ".npy":
+                raise NotImplementedError(f"Embeddings must be stored in .npy format. Found {embedpath.suffix}")
+            self.data = read_feather(datapath)
+            self.embeddings = load_array(embedpath)
+            print(f"Loaded data and embeddings from {datapath} & {embedpath}")
 
-    def merge(self)
-        pass
+    def save(self, datapath:str, embedpath: str) -> None:
+        """
+        Save merged dataset to disk.
+        Args:
+            datapath: string that specifies where merged data will be stored.
+            embedpath: string that specifies where respective embeddings will be stored.
+        """
+        if not datapath:
+            raise NotImplementedError(f"datapath must be provided to load from disk.")
+        if not embedpath: 
+            raise NotImplementedError(f"embedpath must be provided to load from disk")
+        datapath, embedpath = Path(datapath), Path(embedpath)
+
+        if isinstance(self.data, DataFrame) and isinstance(self.embeddings, array):
+            self.data.to_feather(datapath)
+            save_array(embedpath, self.embeddings, allow_pickle=False)
+            print(f"Stored dataframe and embeddings at {datapath}, {embedpath}.")
+        else:
+            raise NotImplementedError("Data or embeddings missing, aborting save.")
+
+    def merge(self) -> None:
+        """
+        Basic merge that picks embeddings based on the indices present in Datasets and then 
+        concatenates the respective data and embeddings.
+        Idea: 
+            Both Datasets have already been preprocessed to the needed proportions. 
+            All that remains is the concatenation of both of them.
+        """
+        if not isinstance(self.source, Dataset) or not isinstance(self.target, Dataset):
+            raise NotImplementedError("Please provide both source and target Dataset.")
+        if not isinstance(self.source_embedder, Embedder) or not isinstance(self.target_embedder, Embedder):
+            raise NotImplementedError("Please provide both source and target Embedder.")
+        
+        if self.source_embedder.embeddings is None or self.target_embedder.embeddings is None:
+            raise NotImplementedError("Please provide both source and target embeddings.")
+        
+        source_ids = self.source.data.index.tolist()
+        target_ids = self.target.data.index.tolist()
+        source_embeddings = self.source_embedder.embeddings[source_ids]
+        target_embeddings = self.target_embedder.embeddings[target_ids]
+        self.data = concat_dataframe([self.source.data, self.target.data])
+        self.embeddings = concat_array((source_embeddings, target_embeddings))
+        # TODO: Step that adjusts numeric labels to make sure we don't have wrong overlap
+        # Merger Object merges data and retrieves embeddings
+        # Then we need to obtain updated numeric labels
+        # Then we can pass the merged embeddings to the UmapReducer class

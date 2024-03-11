@@ -1,4 +1,5 @@
 from pathlib import Path
+from tempfile import TemporaryFile
 from numpy import ndarray
 
 from sciencenow.core.pipelines import (
@@ -20,7 +21,12 @@ from sciencenow.core.steps import (
     ArxivLoadFeatherStep,
 )
 
-from sciencenow.core.dataset import ArxivDataset
+from sciencenow.core.dataset import (
+    ArxivDataset,
+    Dataset,
+    BasicMerger,
+)
+
 
 from sciencenow.core.embedding import ArxivEmbedder
 from sciencenow.core.dimensionality import UmapReducer
@@ -106,6 +112,10 @@ output = pipe.execute(input="C:\\Users\\Bene\\Desktop\\arxiv_processed.feather")
 # After filtering only the 50 relevant papers remain. 
 # Let's perform loading without filtering to see the upper limit of memory consumption
 
+path = "C:\\Users\\Bene\\Desktop\\testfolder\\Experiments\\all-distilroberta-v1\\taxonomy.txt"
+ds = ArxivDataset(path=path, pipeline=None)
+ds.load_taxonomy(path=path)
+
 pipe = ArxivPipeline(
     steps=[
         ArxivLoadFeatherStep(),
@@ -117,8 +127,8 @@ pipe = ArxivPipeline(
 output = pipe.execute(input="C:\\Users\\Bene\\Desktop\\arxiv_processed.feather")
 # Without any filtering python sits at 4.8 GB of Memory consumption.
 # For performance reasons we do want to keep the data in memory and only load the embeddings we need.
-
-
+# old_output = pipe.execute(input="C:\\Users\\Bene\\Desktop\\testfolder\\Experiments\\all-distilroberta-v1\\arxiv_df.feather")
+# the index entries of both data frames match => we can just pick embeddings by indexing
 
 
 
@@ -138,3 +148,70 @@ assert embedder.embeddings.shape == (30, 768)
 reducer = UmapReducer()
 
 data = embedder.embeddings
+
+#### Test Datasets and Dataset merger
+# set up sample of 50 papers from 2020
+path = "C:\\Users\\Bene\\Desktop\\testfolder\\Experiments\\all-distilroberta-v1\\taxonomy.txt"
+ds = ArxivDataset(path=path, pipeline=None)
+ds.load_taxonomy(path=path)
+
+source_pipe = ArxivPipeline(
+    steps=[
+        ArxivLoadFeatherStep(),
+        ArxivDateTimeFilterStep(
+            interval={
+                "startdate": "01 01 2020",
+                "enddate": "31 12 2020"}),
+        ArxivTaxonomyFilterStep(target="cs"),
+        ArxivPlaintextLabelStep(taxonomy=ds.taxonomy, threshold=0, target="cs"),
+        ArxivReduceSubsetStep(limit=50),
+        ArxivGetNumericLabelsStep(mask_probability=0),
+    ]
+)
+
+sourceds = ArxivDataset(path=TemporaryFile().file.name, pipeline=source_pipe)
+sourceds.execute_pipeline(input="C:\\Users\\Bene\\Desktop\\arxiv_processed.feather")
+
+# set up sample of 50 papers from 2021
+target_pipe = ArxivPipeline(
+    steps=[
+        ArxivLoadFeatherStep(),
+        ArxivDateTimeFilterStep(
+            interval={
+                "startdate": "01 01 2021",
+                "enddate": "31 12 2021"}),
+        ArxivTaxonomyFilterStep(target="cs"),
+        ArxivPlaintextLabelStep(taxonomy=ds.taxonomy, threshold=0, target="cs"),
+        ArxivReduceSubsetStep(limit=50),
+        ArxivGetNumericLabelsStep(mask_probability=0),
+    ]
+)
+targetds = ArxivDataset(path=TemporaryFile().file.name, pipeline=target_pipe)
+targetds.execute_pipeline(input="C:\\Users\\Bene\\Desktop\\arxiv_processed.feather")
+
+# both datasets are still ordered by v1_datetime
+# setting up embedder (in this case the same one for both datasets)
+embedder = ArxivEmbedder(
+    source="C:\\Users\\Bene\\Desktop\\testfolder\\Experiments\\all-distilroberta-v1\\embeddings.npy",
+    target=TemporaryFile().file.name,
+    data=None
+)
+
+embedder.load()
+# Setting up the merger class
+merger = BasicMerger(
+    source=sourceds,
+    target=targetds,
+    source_embedder=embedder,
+    target_embedder=embedder,
+)
+
+merger.merge()
+
+assert len(merger.data) == 100
+assert merger.data.v1_datetime.tolist()[0].__repr__() == "Timestamp('2020-01-06 05:36:57+0000', tz='UTC')"
+merger.data.v1_datetime.tolist()[-1].__repr__() == "Timestamp('2021-12-16 10:39:09+0000', tz='UTC')"
+assert merger.embeddings.shape == (100, 768)
+
+# We pass the merger object to the Model Object with the Reducer object.
+# The Model will take care of adjusting the labels and then performing the dim reduction.

@@ -25,3 +25,5 @@ output = processingstep.execute(input=output)
 input = Path("C:\\Users\\Bene\\Desktop\\testfolder\\Experiments\\arxiv-metadata-oai-2023-11-13.json")
 loadstep = ArxivLoadStep(nrows=10000)
 output = loadstep.execute(input=input)
+
+# TODO: Assert that every processing step returns a data frame that is ordered by v1_datetime
