@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 from collections import Counter
 
 from pandas import DataFrame
@@ -9,13 +9,14 @@ from tqdm import tqdm
 
 from sciencenow.core.dimensionality import Dimensionality
 from sciencenow.core.clustering import River
+from sciencenow.core.utils import chunk_list
 
+from river.cluster import DBSTREAM
 from hdbscan import HDBSCAN
 from bertopic import BERTopic
 from bertopic.vectorizers import ClassTfidfTransformer, OnlineCountVectorizer
 
 from sklearn.feature_extraction.text import CountVectorizer
-
 
 
 class TopicModel(ABC):
@@ -49,7 +50,7 @@ class BERTopicBase(TopicModel):
     
     Args:
         data: DataFrame containing documents in "abstracts" and timestamps in "v1_timestamps"
-        embeddings: array containing sentence embeddings of documents
+        embeddings: array containing reduced sentence embeddings of documents
         reducer: Reducer class that provides dimensionality reduction functionality
         cluster_model: Any cluster model of choice
         ctfidf_model: Any ClassTfidfTransformer
@@ -67,18 +68,13 @@ class BERTopicBase(TopicModel):
         self.reducer = Dimensionality(self.embeddings) # embeddings for subset are always already reduced
         self.cluster_model = cluster_model
         self.ctfidf_model = ctfidf_model
-        self.vectorizer_model = None
-        self.topic_model = None
+        self.vectorizer_model = CountVectorizer(stop_words="english")
+
         self.topics = None
         self.topic_info = None
         self.corpus = None
         self.vocabulary = None
-    
-    def setup(self):
-        """
-        We need to split setup from init since we pass in different components for the Online model.
-        """
-        self.vectorizer_model = CountVectorizer(stop_words="english")
+        
         self.topic_model = BERTopic(
             umap_model=self.reducer,
             hdbscan_model=self.cluster_model,
@@ -177,9 +173,110 @@ class BERTopicOnline(BERTopicBase):
             self,
             data: DataFrame,
             embeddings: array,  
-            cluster_model: Any, 
+            cluster_model: Any,
+            cluster_params: Dict[str, Any],
             ctfidf_model: Any
             ) -> None:
         super().__init__(data, embeddings, cluster_model, ctfidf_model)
+        self.data = data
+        self.embeddings = embeddings # sciencenow.core.dimensionality.UmapReducer.reduced_embeddings
+        self.reducer = Dimensionality(self.embeddings) # embeddings for subset are always already reduced
+        self.cluster_model = River(model=DBSTREAM(**cluster_params))
+        self.ctfidf_model = ClassTfidfTransformer(reduce_frequent_words=True, bm25_weighting=True)
+        self.vectorizer_model = OnlineCountVectorizer(min_df=10, stop_words="english") # min_df to avoid memory problems during eval
         
+        self.topics = None
+        self.topic_info = None
+        self.topics_over_time = None
+        self.corpus = None
+        self.vocabulary = None
+
+        self.topic_model = BERTopic(
+            umap_model=self.reducer,
+            hdbscan_model=self.cluster_model,
+            ctfidf_model=self.ctfidf_model,
+            vectorizer_model=self.vectorizer_model,
+            verbose=True,
+            calculate_probabilities=False,
+        )
+        print("Setup complete.")
+
+    def train(self, setup_params: Dict[str, Any]) -> None:
+        """
+        Train an Online Topic Model.
+        """
+        docs = self.data.abstract.tolist()
+        doc_chunks = chunk_list(docs, n=setup_params["nr_chunks"])
+        timestamps = self.data.v1_datetime.tolist()
+        self.topics = []
+        for docs in tqdm(doc_chunks):
+            self.topic_model.partial_fit(docs)
+            self.topics.extend(self.topic_model.topics_)
+        # for postprocessing
+        self.topic_model.topics_ = self.topics
+        # need to quantize into bins for trend extraction
+        self.topics_over_time = self.topic_model.topics_over_time(
+            docs, 
+            timestamps, 
+            nr_bins=setup_params["nr_bins"],
+            evolution_tuning=setup_params["evolution_tuning"],
+            global_tuning=setup_params["global_tuning"],
+            )
+        self.topic_info = self.topic_model.get_topic_info()
+
+
+class BERTopicDynamic(BERTopicBase):
+    """
+    Extends BERTopic Base to dynamic Model. Requires slightly different setup and training.
+    """
+    def __init__(
+            self, 
+            data: DataFrame, 
+            embeddings: array, 
+            cluster_model: Any, 
+            ctfidf_model: Any) -> None:
+        super().__init__(data, embeddings, cluster_model, ctfidf_model)
+        self.data = data
+        self.embeddings = embeddings
+        self.reducer = Dimensionality(self.embeddings)
+        self.cluster_model = cluster_model
+        self.vectorizer_model = CountVectorizer(stop_words="english")
+
+        self.topics = None
+        self.topic_info = None
+        self.topics_over_time = None
+        self.corpus = None
+        self.vocabulary = None
+
+        self.topic_model = BERTopic(
+            umap_model=self.reducer,
+            hdbscan_model=self.cluster_model,
+            ctfidf_model=self.ctfidf_model,
+            vectorizer_model=self.vectorizer_model,
+            verbose=True,
+            calculate_probabilities=False,
+        )
+        print("Setup complete.")
+
+    def train(self, setup_params: Dict[str, Any]) -> None:
+        """
+        Train a dynamic topic model.
+        """
+        docs = self.data.abstract.tolist()
+        embeddings = self.embeddings
+        timestamps = self.data.v1_datetime.tolist()
+        self.topics, _ = self.topic_model.fit_transform(docs, embeddings)
+        # reassign to hopefully help with topicover time representation
+        # https://github.com/MaartenGr/BERTopic/issues/1593
+        self.topic_model.topics_ = self.topics
+        print(f"Fitting dynamic model with {len(timestamps)} timestamps and {setup_params['nr_bins']} bins.")
+        self.topics_over_time = self.topic_model.topics_over_time(
+            docs,
+            timestamps,
+            nr_bins=setup_params["nr_bins"],
+            evolution_tuning=setup_params["evolution_tuning"],
+            global_tuning=setup_params["global_tuning"],
+            )
+        self.topic_info = self.topic_model.get_topic_info()
+
 
