@@ -8,7 +8,7 @@ from sciencenow.core.pipelines import (
 from sciencenow.core.steps import (
     PubmedLoadStep,
     PubmedPreprocessingStep,
-    ArxivLoadStep,
+    ArxivLoadJsonStep,
     ArxivDateTimeParsingStep,
     ArxivDateTimeFilterStep,
     ArxivAbstractPreprocessingStep,
@@ -16,6 +16,8 @@ from sciencenow.core.steps import (
     ArxivPlaintextLabelStep,
     ArxivReduceSubsetStep,
     ArxivGetNumericLabelsStep,
+    ArxivSaveFeatherStep,
+    ArxivLoadFeatherStep,
 )
 
 from sciencenow.core.dataset import ArxivDataset
@@ -41,14 +43,14 @@ out = pipe.execute(input=input)
 
 #### Test Arxiv Pipeline
 path = "C:\\Users\\Bene\\Desktop\\testfolder\\Experiments\\all-distilroberta-v1\\taxonomy.txt"
-ds = ArxivDataset(path="path", pipeline=None)
+ds = ArxivDataset(path=path, pipeline=None)
 ds.load_taxonomy(path=path)
 
 input = Path("C:\\Users\\Bene\\Desktop\\testfolder\\Experiments\\arxiv-metadata-oai-2023-11-13.json")
 
 pipe = ArxivPipeline(
     steps=[
-        ArxivLoadStep(nrows=10000),
+        ArxivLoadJsonStep(nrows=None),
         ArxivDateTimeParsingStep(),
         ArxivDateTimeFilterStep(
             interval={
@@ -62,7 +64,6 @@ pipe = ArxivPipeline(
     ]
 )
 
-
 output = pipe.execute(input=input)
 
 assert len(output) == 77
@@ -70,6 +71,58 @@ assert "v1_datetime" in output.keys()
 assert "l1_labels" in output.keys()
 assert "plaintext_labels" in output.keys()
 assert "numeric_labels" in output.keys()
+
+# Perform preprocessing and save to .feather
+pipe = ArxivPipeline(
+    steps=[
+        ArxivLoadJsonStep(nrows=None),
+        ArxivDateTimeParsingStep(),
+        ArxivAbstractPreprocessingStep(),
+        ArxivSaveFeatherStep(path="C:\\Users\\Bene\\Desktop\\arxiv_processed.feather")
+    ]
+)
+
+output = pipe.execute(input=input)
+
+# This highlights the composability of the pipeline/steps pattern, as we now only have to 
+# execute the feather load step and then perform filtering like so: 
+
+pipe = ArxivPipeline(
+    steps=[
+        ArxivLoadFeatherStep(),
+        ArxivDateTimeFilterStep(
+            interval={
+                "startdate": "01 01 2020",
+                "enddate": "31 12 2020"}),
+        ArxivTaxonomyFilterStep(target="cs"),
+        ArxivPlaintextLabelStep(taxonomy=ds.taxonomy, threshold=0, target="cs"),
+        ArxivReduceSubsetStep(limit=50),
+        ArxivGetNumericLabelsStep(mask_probability=0),
+    ]
+)
+
+output = pipe.execute(input="C:\\Users\\Bene\\Desktop\\arxiv_processed.feather")
+# Now loading only causes a temporary spike in memory consumption when the dataframe is loaded.
+# After filtering only the 50 relevant papers remain. 
+# Let's perform loading without filtering to see the upper limit of memory consumption
+
+pipe = ArxivPipeline(
+    steps=[
+        ArxivLoadFeatherStep(),
+        ArxivPlaintextLabelStep(taxonomy=ds.taxonomy, threshold=0, target=None),
+        ArxivGetNumericLabelsStep(mask_probability=0),
+    ]
+)
+
+output = pipe.execute(input="C:\\Users\\Bene\\Desktop\\arxiv_processed.feather")
+# Without any filtering python sits at 4.8 GB of Memory consumption.
+# For performance reasons we do want to keep the data in memory and only load the embeddings we need.
+
+
+
+
+
+
 
 embedder = ArxivEmbedder(
     source=None,

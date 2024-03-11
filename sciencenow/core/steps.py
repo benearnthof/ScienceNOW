@@ -5,7 +5,7 @@ from pathlib import Path
 from collections import Counter
 from dateutil import parser
 from tqdm import tqdm
-from pandas import DataFrame, read_json, to_datetime
+from pandas import DataFrame, read_json, to_datetime, read_feather
 from numpy import array
 from random import choices
 
@@ -64,7 +64,7 @@ class PubmedPreprocessingStep(Step):
         return DataFrame(data)
         
 
-class ArxivLoadStep(Step):
+class ArxivLoadJsonStep(Step):
     """
     Step to load OAI snapshot from disk and return a pandas dataframe.
     """
@@ -92,6 +92,50 @@ class ArxivLoadStep(Step):
         output = output.drop_duplicates(subset="id")
         print(f"Loaded {len(output)} entries from {input}.")
         return output
+    
+class ArxivLoadFeatherStep(Step):
+    """
+    Step to directly load a .feather file containing a dataframe with 
+    ArxivLoadJsonStep
+    ArxivDateTimeParsingStep
+    ArxivAbstractPreprocessingStep
+    Already Performed. This saves about 5 minutes of computation for the sequential datetime parsing.
+    """
+    def __init__(self) -> None:
+        super().__init__()
+
+    def execute(self, input: str) -> DataFrame:
+        path = Path(input)
+        if not path.exists():
+            raise NotImplementedError(f"No file found at specified location: {path}")
+        if not path.suffix == ".feather":
+            raise NotImplementedError(f"Data must be stored in .feather format, found {path.suffix}")
+        print(f"Loaded dataframe from {path}")
+        return read_feather(path)
+    
+class ArxivSaveFeatherStep(Step):
+    """
+    Step to directly save a .feather file containing a dataframe with 
+    ArxivLoadJsonStep
+    ArxivDateTimeParsingStep
+    ArxivAbstractPreprocessingStep
+    Already Performed to disk.
+    """
+    def __init__(self, path: str) -> None:
+        super().__init__()
+        self.path=Path(path)
+
+    def execute(self, input: DataFrame) -> DataFrame:
+        if input is None:
+            raise NotImplementedError(f"Provide Dataset to save.")
+        if not isinstance(input, DataFrame):
+            raise NotImplementedError(f"Input must be `pandas.core.frame.DataFrame`.")
+        if not self.path.suffix == ".feather":
+            raise NotImplementedError(f"Data must be stored in .feather format, found {self.path.suffix}")
+        print(f"Saving dataframe to {self.path}")
+        input.to_feather(self.path)
+        return input
+        
 
 
 class ArxivDateTimeParsingStep(Step):
