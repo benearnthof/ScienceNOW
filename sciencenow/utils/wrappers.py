@@ -3,8 +3,6 @@ Helper Classes
 """
 
 from river import stream
-from river import cluster
-
 
 class Dimensionality:
     """Class we swap in instead of calling UMAP"""
@@ -32,6 +30,7 @@ class River:
             labels.append(label)
         self.labels_ = labels
         return self
+
 
 def chunk_list(a, n):
     """Wrapper to split list of docs a into n chunks of approximately equal length."""

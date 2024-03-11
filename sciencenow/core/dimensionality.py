@@ -73,7 +73,7 @@ class UmapReducer(Reducer):
         Loads Embeddings that have been previously saved with `self.save`
         """
         if not self.source.exists():
-            raise NotImplementedError(f"No precomputed embeddings found in {self.source}. Call `reduce` first.")
+            raise FileNotFoundError(f"No precomputed embeddings found in {self.source}. Call `reduce` first.")
         self.reduced_embeddings = load_array(self.source)
         print(f"Successfully loaded {self.reduced_embeddings.shape[0]} reduced embeddings")
 
@@ -95,3 +95,19 @@ class UmapReducer(Reducer):
             raise NotImplementedError("Cannot reduce empty data, aborting procedure.")
         self.reduced_embeddings = self.umap_model.fit_transform(self.data, y=self.labels)
         print(f"Successfully reduced embeddings of subset from {self.data.shape} to {self.reduced_embeddings.shape}")
+
+
+class Dimensionality:
+    """
+    Auxiliary class that is used to directly pass precomputed reduced embeddings to BERTopic.
+    Not used anymore since we need to recompute reduced embeddings every time the dataset changes.
+    """
+
+    def __init__(self, reduced_embeddings):
+        self.reduced_embeddings = reduced_embeddings
+
+    def fit(self, X):
+        return self
+
+    def transform(self, X):
+        return self.reduced_embeddings

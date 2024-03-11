@@ -11,3 +11,9 @@ def get_plaintext_name(labs, taxonomy):
                 plaintext_labels = " & ".join(plaintext_labels)
                 p_labels.append(plaintext_labels)
             return p_labels
+
+
+def chunk_list(a, n):
+    """Wrapper to split list of docs a into n chunks of approximately equal length."""
+    k, m = divmod(len(a), n)
+    return [a[i*k+min(i, m):(i+1)*k+min(i+1, m)] for i in range(n)]

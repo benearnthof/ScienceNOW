@@ -107,7 +107,7 @@ class ArxivLoadFeatherStep(Step):
     def execute(self, input: str) -> DataFrame:
         path = Path(input)
         if not path.exists():
-            raise NotImplementedError(f"No file found at specified location: {path}")
+            raise FileNotFoundError(f"No file found at specified location: {path}")
         if not path.suffix == ".feather":
             raise NotImplementedError(f"Data must be stored in .feather format, found {path.suffix}")
         print(f"Loaded dataframe from {path}")

@@ -68,11 +68,12 @@ class PubmedDataset(Dataset):
         Method to load a preprocessed dataframe stored as .feather format.
         """
         filepath = Path(path)
-        if filepath.exists():
-            if not filepath.suffix == ".feather":
-                raise NotImplementedError(f"Data must be stored in .feather format, found {filepath.suffix}")
-            self.data = read_feather(filepath)
-            print(f"Loaded dataframe from {path}")
+        if not filepath.exists():
+            raise FileNotFoundError(f"No file found at specified location: {filepath}")
+        if not filepath.suffix == ".feather":
+            raise NotImplementedError(f"Data must be stored in .feather format, found {filepath.suffix}")
+        self.data = read_feather(filepath)
+        print(f"Loaded dataframe from {path}")
 
 
 
@@ -193,14 +194,17 @@ class BasicMerger(DatasetMerger):
             raise NotImplementedError(f"embedpath must be provided to load from disk")
         datapath, embedpath = Path(datapath), Path(embedpath)
         
-        if datapath.exists() and embedpath.exists():
-            if not datapath.suffix == ".feather":
-                raise NotImplementedError(f"Data must be stored in .feather format. Found {datapath.suffix}")
-            if not embedpath.suffix == ".npy":
-                raise NotImplementedError(f"Embeddings must be stored in .npy format. Found {embedpath.suffix}")
-            self.data = read_feather(datapath)
-            self.embeddings = load_array(embedpath)
-            print(f"Loaded data and embeddings from {datapath} & {embedpath}")
+        if not datapath.exists():
+            raise FileNotFoundError(f"No file found at specified datapath: {datapath}")
+        if not embedpath.exists():
+            raise FileNotFoundError(f"No file found at specified embedpath: {embedpath}")
+        if not datapath.suffix == ".feather":
+            raise NotImplementedError(f"Data must be stored in .feather format. Found {datapath.suffix}")
+        if not embedpath.suffix == ".npy":
+            raise NotImplementedError(f"Embeddings must be stored in .npy format. Found {embedpath.suffix}")
+        self.data = read_feather(datapath)
+        self.embeddings = load_array(embedpath)
+        print(f"Loaded data and embeddings from {datapath} & {embedpath}")
 
     def save(self, datapath:str, embedpath: str) -> None:
         """
