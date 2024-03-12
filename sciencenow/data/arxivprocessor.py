@@ -1,5 +1,5 @@
 """
-Wrapper for mass import of Arxiv Data
+DEPRECATED
 """
 
 import pandas as pd

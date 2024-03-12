@@ -1,3 +1,7 @@
+"""
+DEPRECATED
+"""
+
 # Visualizing documents
 import itertools
 import pandas as pd

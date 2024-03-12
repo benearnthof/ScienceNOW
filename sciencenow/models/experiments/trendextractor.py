@@ -1,3 +1,7 @@
+"""
+DEPRECATED
+"""
+
 """Trend Extractor Class to postprocess a Topic Model"""
 import pickle
 import pandas as pd

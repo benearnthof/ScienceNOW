@@ -1,5 +1,5 @@
 """
-Topic Modeling with BERTopic
+DEPRECATED
 """
 
 # the algo:

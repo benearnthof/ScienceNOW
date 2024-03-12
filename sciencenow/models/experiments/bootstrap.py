@@ -1,3 +1,7 @@
+"""
+DEPRECATED
+"""
+
 #### Bootstrap Topic Model
 # Fit Model to data to derive first layer topics
 # then fit partial model on clusters to derive more detailed topics

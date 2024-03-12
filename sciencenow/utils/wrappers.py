@@ -1,5 +1,5 @@
-""" 
-Helper Classes
+"""
+DEPRECATED
 """
 
 from river import stream

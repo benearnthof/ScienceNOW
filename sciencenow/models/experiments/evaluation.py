@@ -1,3 +1,7 @@
+"""
+DEPRECATED
+"""
+
 # https://github.com/MaartenGr/BERTopic_evaluation/blob/main/notebooks/Evaluation.ipynb
 
 import pandas as pd

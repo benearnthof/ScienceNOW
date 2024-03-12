@@ -1,3 +1,7 @@
+"""
+DEPRECATED
+"""
+
 # need a login, will need to continuously scroll to load more data
 import pandas as pd
 from tqdm import tqdm

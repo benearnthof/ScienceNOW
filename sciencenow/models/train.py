@@ -1,4 +1,8 @@
 """
+DEPRECATED
+"""
+
+"""
 Wrapper class that unifies Topic Model training. 
 """
 import json

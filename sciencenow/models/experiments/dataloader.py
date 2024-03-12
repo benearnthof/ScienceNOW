@@ -1,3 +1,7 @@
+"""
+DEPRECATED
+"""
+
 import re
 import nltk
 import string

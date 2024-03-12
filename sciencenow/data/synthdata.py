@@ -1,6 +1,7 @@
 """
-Preprocessing for Synthetic Trend Auxiliary Datasets
+DEPRECATED
 """
+
 
 # from sciencenow.data.arxivprocessor import ArxivProcessor
 # processor = ArxivProcessor(sort_by_date=True)

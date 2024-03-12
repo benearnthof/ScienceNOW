@@ -1,3 +1,7 @@
+"""
+DEPRECATED
+"""
+
 # semi supervised hierarchical model
 # arxiv papers fall in a natural hierarchy
 # larger topics like physics, maths, computer science, etc. are split into subtopics

@@ -1,6 +1,7 @@
 """
-FastAPI app that gets entries from Arxiv & saves them to a postgres db
+DEPRECATED
 """
+
 from fastapi import FastAPI
 
 from sciencenow.api.arxiv import router

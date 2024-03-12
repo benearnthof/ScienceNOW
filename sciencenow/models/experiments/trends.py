@@ -1,4 +1,8 @@
 """
+DEPRECATED
+"""
+
+"""
 Trying to uncover Trends by observing relative cluster growth over time.
 Construct synthetic dataset with fixed number of papers in each cluster.
 Vary their respective dates of publication to simulate emerging trends
