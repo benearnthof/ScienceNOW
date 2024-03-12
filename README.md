@@ -62,19 +62,68 @@ After downloading the Arxiv Snapshot from the OAI or from the provided Google Dr
 If you wish to perform topic modelling on large subsets of the Arxiv metadata it is recommended to install (https://github.com/rapidsai/cuml)[https://github.com/rapidsai/cuml] as the parallel implementation of UMAP runs orders of magnitude faster than the default CPU implementation available in the umap python library.  
 
 After updating the OAI snapshot, you need to rerun the preprocessing steps to convert the data into a dataframe and save it as a `.feather` file for faster loading.  
-To do so, delete the old `arxiv_df.feather` file and do the following:  
-```python
-from sciencenow.data.arxivprocessor import ArxivProcessor
-processor = ArxivProcessor(sort_by_date=True)
-processor.load_snapshot()
-```
-The `load_snapshot` method will load the preprocessed data frame present at the `FEATHER_PATH` location specified in `secrets.yaml`. If no such file is present, it will read the OAI snapshot in the `ARXIV_SNAPSHOT` location and do the following:  
-* Remove any duplicate entries by ID
-* Extract the date the first version of each respective preprint was uploaded and parse it as `datetime`.
-* Preprocess the abstracts (removal of newline characters).
-* Serializing the dataframe as a `.feather` file to disk.
+An example experiment where synthetic trends are added to a target dataset is given in `demo.py`.
 
-This will cut down preprocessing times for 2.7 million abstracts to a couple of seconds of loading the data frame from disk.  
+To set the preprocesing pipeline up and load data from disk we define the Pipeline we wish to run and then execute it like so:  
+```python
+from pathlib import Path
+from tempfile import TemporaryFile
+
+from sciencenow.core.pipelines import (
+    ArxivPipeline,
+)
+
+from sciencenow.core.steps import (
+    ArxivDateTimeFilterStep,
+    ArxivTaxonomyFilterStep,
+    ArxivPlaintextLabelStep,
+    ArxivReduceSubsetStep,
+    ArxivGetNumericLabelsStep,
+    ArxivLoadFeatherStep,
+)
+
+from sciencenow.core.dataset import (
+    ArxivDataset,
+)
+
+from sciencenow.config import (
+    setup_params,
+)
+
+setup_params["target"] = "cs.LG"
+setup_params["cluster_size"] = 6
+setup_params["secondary_target"] = "q-bio"
+setup_params["secondary_proportion"] = 0.2
+setup_params["trend_deviation"] = 1.67
+setup_params["recompute"] = True
+
+SETUP_PARAMS = setup_params
+
+path = "C:\\Users\\Bene\\Desktop\\testfolder\\Experiments\\all-distilroberta-v1\\taxonomy.txt"
+ds = ArxivDataset(path=path, pipeline=None)
+ds.load_taxonomy(path=path)
+
+target_pipe = ArxivPipeline(
+    steps=[
+        ArxivLoadFeatherStep(),
+        ArxivDateTimeFilterStep(
+            interval={
+                "startdate": "01 01 2020",
+                "enddate": "31 01 2020"}),
+        ArxivTaxonomyFilterStep(target="cs"),
+        ArxivPlaintextLabelStep(taxonomy=ds.taxonomy, threshold=25, target="cs"),
+        ArxivReduceSubsetStep(limit=400),
+        ArxivGetNumericLabelsStep(mask_probability=0),
+    ]
+)
+
+targetds = ArxivDataset(path=TemporaryFile().file.name, pipeline=target_pipe)
+targetds.execute_pipeline(input=FEATHER_PATH])
+
+```
+The `ArxivLoadFeatherStep` method will load the preprocessed data frame present at the `FEATHER_PATH` location specified in `secrets.yaml`.
+
+This will cut down preprocessing times for 2.3 million abstracts to a couple of seconds of loading the data frame from disk.  
 
 ### Training and Evaluating Topic Models: 
 
@@ -139,41 +188,69 @@ For more information about each of these OTM hyperparameters please refer to the
 #### Topic Model Evaluation
 Assessing the performance of Topic Models is not trivial, as usually collections of relevant documents will be unlabeled or, like it is the case with Arxiv preprints, only fall into broad categories that may overlap or not align reflect the contents of papers perfectly. This problem is doubly relevant for the approach presented here, as the topic clusters obtained by dynamic or online topic modeling will grow and change over the time period of interest. This Leads us to use Normalized Pointwise Mutual Information (NPMI/Coherence), and Topic Diversity, to assess the alignment of obtained clusters with human judgment like presented in the original BERTopic paper, and also use Cluster Purity and "Acuity" as proxy measures of how many of the documents in each cluster fall into the same prior "soft label" from the arxiv taxonomy, and how well the model picks up artificially introduced clusters of "fake" data given the specified hyperparameters. 
 
-As an example one might choose to pick the following set of hyperparameters: 
+As full example of this is presented in `demo.py` but the gist is setting up a Model and then executing a postprocessing pipeline along the lines of: 
 ```python
 
-from sciencenow.models.train import ModelWrapper 
+from sciencenow.core.model import BERTopicDynamic
 
-setup_params = {
-    "samples": 1, # hdbscan samples
-    "cluster_size": 50, # hdbscan minimum cluster size
-    "startdate": str(args.sdate), #"01 01 2021", # if no date range should be selected set startdate to `None`
-    "enddate": str(args.edate), #"31 01 2021",
-    "target": "cs", # if no taxonomy filtering should be done set target to `None`
-    "secondary_target": "q-bio", # for synthetic trend extraction
-    "secondary_startdate": "01 01 2020",
-    "secondary_enddate": "31 12 2020",
-    "secondary_proportion": 0.1,
-    "trend_deviation": 1.5, # value between 1 and 2 that determines how much more papers will be in the "trending bins"
-                            # compared to the nontrending bins
-    "n_trends": 1,
-    "recompute": True,
-    "nr_bins": 4, # number of bins for dynamic BERTopic, set to 52 for 52 weeks per year
-}
-    
-wrapper = ModelWrapper(setup_params=setup_params, model_type="semisupervised")
-res = wrapper.train_and_evaluate(save=f"/dss/dssmcmlfs01/pr74ze/pr74ze-dss-0001/ru25jan4/tm_evaluation/{args.dir}/{args.clust}")
+# Need to 
+model = BERTopicDynamic(
+    data = merger.data,
+    embeddings = reducer.reduced_embeddings,
+    cluster_model=cluster_model,
+    ctfidf_model=ctfidf_model,
+)
+
+# train model
+
+model.train(setup_params=SETUP_PARAMS)
+
+eval_pipe = ArxivPipeline(
+    steps = [
+        GetOctisDatasetStep(root = str(Path(TemporaryFile().file.name).parent)),
+        GetDynamicTopicsStep(),
+        GetMetricsStep(),
+        CalculateDynamicDiversityStep(),
+        CalculateCoherenceStep(),
+        ExtractEvaluationResultsStep(
+            id=merger.get_id(SETUP_PARAMS, primary=False),
+            setup_params=SETUP_PARAMS
+        ),
+    ]
+)
+
+eval_pipe.execute(input=model)
 ```
-
-This will result in a Topic Model being trained on computer science preprints that were first added to the Arxiv between January 1st and January 31st 2021. If, for example, 4500 such papers fall into this time period, the model wrapper will then also add 450 (as specified by the `secondary_proportion` argument) quantitative biology papers randomly selected from the year 2020. It is recommended to select papers published prior to the time frame of interest to keep synthetic trends as separate from the original data as possible, but of course the model also works if the chosen secondary subset is semantically similar to the preprints of interest. 
-The wrapper will introduce 1 artificial trend into one of the 4 time bins. Such a synthetic trend is a randomly selected time bin that contains `trend_deviation` * n_secondary_papers / n_bins papers as compared to the rest of the time bins. In this example. assuming 450 q-bio preprints, 4 time bins and one synthetic trend with a target deviation of 1.5 the wrapper will add 450 * (1 / (1 + 1 + 1 + 1.5) = 100 papers to three of the time bins, and 450 * (1.5 / (1 + 1 + 1 + 1.5) = 150 papers to the remaining time bin. (Basically 2/9ths of papers falling into every designated non-trend time bin and 3/9ths of papers falling into the designated trend bin. This sampling method extends naturally to less or more time bins, as long as only less than half of the possible time bins are designated as trending. Five time bins with two synthetic trends and weights 2 would result as being weighted like so: 450 * (1 / (3 + 2*trend_deviation)) and 450 * (trend_deviation / (3 + 2*trend_deviation).  
-
-The model will then fit the chosen model type, semisupervised with prior labels obtained from the Arxiv taxonomy combined with a dynamic model.  
-After the fitting has been completed, the wrapper will then compute all evaluation metrics and return them in a dictionary, coupled with the hyperparameters specified for the particular model and the topic labels for each document that was present in the training data.  
+After the fitting has been completed, the evaluation pipeline will then compute all evaluation metrics and add them as a dictionary to the model object, coupled with the hyperparameters specified for the particular model and the topic labels for each document that was present in the training data.  
 For large corpora it is recommended to limit the dataset to <10000 documents during evaluation, since calculating the NPMI is extremely memory hungry and may fail for very large amounts of documents. We tried mitigating this issue by using `https://radimrehurek.com/gensim/corpora/mmcorpus.html` matrix market format corpora for evaluation, but found this solution not sufficient for corpora beyond 20000 documents. All other metrics are not dependent on corpus size.  
 
 ##### Impact of Hyperparameters on Training  
 Perhaps the most intuitive Hyperparameter to showcase is the HDBSCAN minimum cluster size, specified as one of the setup parameters and roughly analogous in impact on model performance to the clustering threshold, its online clustering counterpart. Keeping all other hyperparameters constant and naively training a model with minimum cluster size 1 will result in HDBSCAN generating numerous very small but separate clusters, which will, at least for relatively homogenous datasets, result in clusters of documents being separated from one another despite having very similar contents, perhaps even falling into the same prior taxonomy label class. This is reflected in lower NPMI and diversity scores, as well as a very high cluster purity. This makes intuitive sense, given that the more different clusters are obtained the more similar some clusters will be to other clusters that a human expert may label as falling into a larger umbrella category that may be less specific, yet better reflect the way humans may group topics.  
 Increasing minimum cluster size one can observe that coherence and diversity scores increase up to a threshold and then begin to decrease again as the clusters obtained by the model become more and more general, and less nuanced. For any given month in the years 2020-2023 the models seem to perform best with cluster sizes between 20 and 30.  
 A similar dip can be observed in cluster purity, with very small minimum cluster sizes yielding very pure clusters and very large minimum cluster sizes resulting in very general "impure" clusters. For every day use of this package the user should always inspect the topic labels obtained by the model, as textual descriptions allow users to gauge the impact of any chosen hyperparameter beyond just obtuse performance measures.
+
+#### Trend Extraction
+
+To extract Trending papers from a trained model object we use the `TrendPostprocessor` class like so: 
+
+```python
+trend_postprocessor = TrendPostprocessor(
+    model=model,
+    merger=merger,
+    reducer=reducer,
+    setup_params=SETUP_PARAMS,
+    embedder=embedder,
+)
+# Performance calculations can be done since we added a synthetic subset
+trend_postprocessor.calculate_performance(threshold=1.5)
+
+trend_df, trend_embeddings = trend_postprocessor.get_trend_info(threshold=1.5)
+
+# Inspect trend_df to see which papers were identified as trending
+# We can now visualize the results
+fig = plot_trending_papers(trend_df, trend_embeddings)
+fig.write_html("C:\\Users\\Bene\\Desktop\\trends2.html")
+```
+
+Again, a full example of this is presented in `demo.py`.
 
