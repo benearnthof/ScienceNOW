@@ -19,9 +19,12 @@ from numpy import (
     load as load_array,
     save as save_array,
     rint as random_int,
+    min as array_min,
     concatenate as concat_array,
+    any as any_array,
     array_split,
     array,
+    in1d,
 )
 
 from sciencenow.core.pipelines import Pipeline
@@ -33,7 +36,6 @@ class Dataset(ABC):
     """
     path: str
     pipeline: Pipeline
-    source: Any
     data: DataFrame
 
     @abstractmethod
@@ -56,7 +58,6 @@ class PubmedDataset(Dataset):
         super().__init__()
         self.path = Path(path)
         self.pipeline = pipeline
-        self.source = None
         self.data = None
         self.taxonomy = None
 
@@ -273,7 +274,6 @@ class BasicMerger(DatasetMerger):
         target_embeddings = self.target_embedder.embeddings[target_ids]
         self.data = concat_dataframe([self.source.data, self.target.data])
         self.embeddings = concat_array((source_embeddings, target_embeddings))
-        # TODO: Step that adjusts numeric labels to make sure we don't have wrong overlap
         # Merger Object merges data and retrieves embeddings
         # Then we need to obtain updated numeric labels
         # Then we can pass the merged embeddings to the UmapReducer class
@@ -318,10 +318,12 @@ class SyntheticMerger(BasicMerger):
         target_ids = target.index.tolist()
         synthetic_embeddings = self.source_embedder.embeddings[synthetic_ids]
         target_embeddings = self.target_embedder.embeddings[target_ids]
+        # adjust numeric labels to remove potential class overlaps for supervised models
+        synthetic_set = self.adjust_labels(target, synthetic_set)
         self.data = concat_dataframe([target, synthetic_set])
         self.embeddings = concat_array((target_embeddings, synthetic_embeddings)) # TODO: Order should be preserved, need to write test
 
-    def adjust_timestamps(self, synthetic_set: DataFrame, setup_params: Dict[str, Any]) -> None:
+    def adjust_timestamps(self, synthetic_set: DataFrame, setup_params: Dict[str, Any]) -> DataFrame:
         """
         Adjusts timestamps of source data to simulate a trend in target data upon merging.
         Args:
@@ -351,3 +353,22 @@ class SyntheticMerger(BasicMerger):
         new_set.v1_datetime = new_timestamps
         return new_set
     
+    def adjust_labels(self, target, synthetic):
+        """
+        Method to adjust Labels.
+        General Problem: sciencenow.core.steps.ArxivGetNumericLabelsStep only cares about the 
+        number of distinct plaintext labels present in target and synthetic separately.
+        We need to adjust the labels of the synthetic data to avoid label overlaps.
+        """
+        target_labels = array(target.numeric_labels.tolist())
+        synthetic_labels = array(synthetic.numeric_labels.tolist())
+        adjusted_synthetic = synthetic_labels.copy()
+        while any_array(in1d(adjusted_synthetic, target_labels)):
+            # Find the minimum element in the overlap
+            overlap_min = array_min(adjusted_synthetic[in1d(adjusted_synthetic, target_labels)])
+            # Add a constant value to all elements in synthetic greater than or equal to overlap_min
+            adjusted_synthetic[adjusted_synthetic >= overlap_min] += 1
+        
+        synthetic = synthetic.assign(numeric_labels=adjusted_synthetic)
+        return synthetic
+

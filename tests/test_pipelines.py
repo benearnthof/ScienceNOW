@@ -164,7 +164,7 @@ source_pipe = ArxivPipeline(
                 "startdate": "01 01 2020",
                 "enddate": "31 12 2020"}),
         ArxivTaxonomyFilterStep(target="cs"),
-        ArxivPlaintextLabelStep(taxonomy=ds.taxonomy, threshold=0, target="cs"),
+        ArxivPlaintextLabelStep(taxonomy=ds.taxonomy, threshold=1000, target="cs"),
         ArxivReduceSubsetStep(limit=50),
         ArxivGetNumericLabelsStep(mask_probability=0),
     ]
@@ -181,7 +181,7 @@ target_pipe = ArxivPipeline(
             interval={
                 "startdate": "01 01 2021",
                 "enddate": "31 12 2021"}),
-        ArxivTaxonomyFilterStep(target="cs"),
+        ArxivTaxonomyFilterStep(target="q-bio"),
         ArxivPlaintextLabelStep(taxonomy=ds.taxonomy, threshold=0, target="cs"),
         ArxivReduceSubsetStep(limit=50),
         ArxivGetNumericLabelsStep(mask_probability=0),
