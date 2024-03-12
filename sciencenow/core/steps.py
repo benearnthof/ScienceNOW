@@ -601,7 +601,7 @@ class ExtractEvaluationResultsStep(PostprocessingStep):
     def execute(self, input) -> TopicModel:
         result = {
             "Dataset": self.id,
-            "Dataset Size": len(input.corpus),
+            "Dataset Size": len(input.octis_ds.get_corpus()),
             "Model": "BERTopic",
             "Params": self.setup_params,
             "Diversity": input.diversity,

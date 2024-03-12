@@ -4,8 +4,20 @@ from tqdm import tqdm
 import numpy as np
 from pandas import DataFrame, concat
 import datetime
-from typing import List, Set, Dict, Tuple
+from typing import (
+    List,
+    Set,
+    Dict,
+    Tuple,
+    Any,
+)
+
 from math import log2
+
+from sciencenow.core.model import TopicModel
+from sciencenow.core.dataset import DatasetMerger
+from sciencenow.core.dimensionality import Reducer
+from sciencenow.core.embedding import Embedder
 
 
 class TrendExtractor:
@@ -14,10 +26,10 @@ class TrendExtractor:
     We use the document subset, the respective timestamps & the topics over time obtained during
     training to extract trends and highlight emergent fields.
     """
-    def __init__(self, model_wrapper):
-        self.docs = model_wrapper.subset.abstract.tolist()
-        self.timestamps = model_wrapper.subset.v1_datetime.tolist()
-        self.topics_over_time = model_wrapper.topics_over_time
+    def __init__(self, model: TopicModel) -> None:
+        self.docs = model.data.abstract.tolist()
+        self.timestamps = model.data.v1_datetime.tolist()
+        self.topics_over_time = model.topics_over_time
 
     def extract_linear_trends(self, threshold=1):
         """
@@ -145,7 +157,6 @@ class TrendExtractor:
                 chosen prior tho the model fitting. Default: 0.05 in accordance with 
                 https://sci-hub.se/10.1016/j.eswa.2012.04.059
         """
-        # TODO: Very important Question: 
         # The Time weight factor biases this measure towards the most recent publications
         # in our case the "Enddate" chosen for the analysis. 
         # How do we pick this value to make sure we still find trends in the recent past?
@@ -354,24 +365,33 @@ class TrendPostprocessor:
     """
     Class that uses Extractor and Validator to extract trending paper IDs from corpus.
     """
-    def __init__(self, wrapper) -> None:
+    def __init__(
+            self,
+            model:TopicModel, 
+            merger: DatasetMerger, 
+            reducer: Reducer,
+            setup_params: Dict[str, Any],
+            embedder: Embedder,
+            ) -> None:
         """
         Initialize the Trend Postprocessor
 
         Args:
-            wrapper: A ModelWrapper that has been trained and from which we can potentially extract trends.
-            threshold
+            model: A model that has been trained and from which we can potentially extract trends.
+            merger: A DatasetMerger object that contains info about how synthetic trends were constructed
+            reducer: A Reducer object that contains reduced embeddings (used for visualization only).
         """
-        if wrapper.topics_over_time is None:
+        if model.topics_over_time is None:
             raise NotImplementedError("Cannot extract trends from untrained model.")
-        self.extractor = TrendExtractor(model_wrapper=wrapper)
-        self.subset = wrapper.subset
-        self.topics = wrapper.topics
-        self.topic_info = wrapper.topic_info
-        self.embeddings = wrapper.subset_reduced_embeddings
+        self.extractor = TrendExtractor(model=model)
+        self.embedder = embedder
+        self.subset = model.data
+        self.topics = model.topics
+        self.topic_info = model.topic_info
+        self.embeddings = reducer.reduced_embeddings
         self.deviations = self.extractor.calculate_deviations()
-        self.papers_per_bin = wrapper.papers_per_bin
-        self.target = wrapper.setup_params["secondary_target"]
+        self.papers_per_bin = merger.papers_per_bin
+        self.target = setup_params["secondary_target"]
         if self.target is not None:
             self.ds_synthetic = self.subset[self.subset["l1_labels"].str.startswith(f"{self.target}")]
         else:
@@ -477,7 +497,8 @@ class TrendPostprocessor:
         # make sure background topic is never trending (does not provide meaningful info)
         trend_df = trend_df[trend_df["Topic"] != -1]
         # Get reduced embeddings for each paper so we can visualize them
-        trend_embeddings = self.embeddings[trend_df.index]
+        trend_embeddings = self.embedder.embeddings[trend_df.index]
+        # TODO: This breaks since we need to perform supervised umap to visualize the correct clusters
         # Get the topic representation so we can use them to label the plot
         topic_reps = [self.topic_info[self.topic_info["Topic"]==x].Representation.tolist()[0] for x in trend_df["Topic"].tolist()]
         # merge trend info with trending df

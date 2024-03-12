@@ -1,80 +1,53 @@
 """
-Preprocessing a fresh OAI snapshot.
-
-To preprocess a new snapshot or set everything up for the first time save a config like so:
-
-ARXIV_SNAPSHOT: "path/to/new/snapshot/arxiv-metadata-oai-2023-11-13.json"
-EMBEDDINGS: "path/for/new/embeddings.npy"
-REDUCED_EMBEDDINGS: "path/for/new/reduced_embeddings.npy"
-FEATHER_PATH: "path/for/new/arxiv_df.feather"
-TAXONOMY_PATH: "path/to/taxonomy/for/semisupervised/model/taxonomy.txt"
-EVAL_ROOT: "path/to/store/eval/results/"
-VOCAB_PATH: "path/for/new/vocab.txt"
-CORPUS_PATH: "path/for/new/corpus.tsv"
-SENTENCE_MODEL: "sentence-transformers/all-distilroberta-v1"
-UMAP_NEIGHBORS: 15
-UMAP_COMPONENTS: 5
-UMAP_METRIC: "cosine"
-VOCAB_THRESHOLD: 15
-TM_VOCAB_PATH: "path/for/new/tm_vocab.txt" (used to cache vocab during evaluation)
-TM_TARGET_ROOT: "path/for/new/eval" (used to cache topic models during evaluation)
-
+Setting up and running a Dynamic Topic Model for Trend Detection
 """
-RECOMPUTE_ALL = False
-#### Preprocessing Data
-# Loading the snapshot first
-from sciencenow.models.train import ModelWrapper
-from sciencenow.config import (
-    setup_params,
-    online_params
+from pathlib import Path
+from tempfile import TemporaryFile
+from numpy import array
+
+from hdbscan import HDBSCAN
+from bertopic.vectorizers import ClassTfidfTransformer
+
+from sciencenow.core.pipelines import (
+    ArxivPipeline,
 )
 
+from sciencenow.core.steps import (
+    # Preprocessing Steps
+    ArxivDateTimeFilterStep,
+    ArxivTaxonomyFilterStep,
+    ArxivPlaintextLabelStep,
+    ArxivReduceSubsetStep,
+    ArxivGetNumericLabelsStep,
+    ArxivLoadFeatherStep,
+    # Postprocessing Steps
+    GetOctisDatasetStep,
+    GetDynamicTopicsStep,
+    GetMetricsStep,
+    CalculateDynamicDiversityStep,
+    CalculateCoherenceStep,
+    ExtractEvaluationResultsStep,
+)
+
+from sciencenow.core.dataset import (
+    ArxivDataset,
+    SyntheticMerger
+)
+
+from sciencenow.core.embedding import ArxivEmbedder
+from sciencenow.core.dimensionality import UmapReducer
+from sciencenow.core.model import BERTopicDynamic
+
+# Topic Detection
 from sciencenow.postprocessing.trends import (
-    TrendValidatorIR,
-    TrendExtractor,
     TrendPostprocessor
 )
 
 from sciencenow.utils.plotting import plot_trending_papers
-import numpy as np
 
-if RECOMPUTE_ALL:
-    from sciencenow.data.arxivprocessor import ArxivProcessor
-    processor = ArxivProcessor(sort_by_date=True)
-    processor.load_snapshot()
-    # Embed with the sentence transformer of choice
-    # If you're running this for the first time, the processor will download the respective model config and weights to disk first
-    # The processor will then precalculate batches depending on the power of your GPU.
-    # This will also take around 1-2 minutes
-    # after this all 2.7 million abstracts will be encoded to embeddings and saved disk at
-    # "path/for/new/embeddings.npy"
-    # Depending on which model you've chosen the entire process will take anywhere from 40-160 minutes.
-    # Since we already precomputed the embeddings this method will simply load the embeddings from disk.
-    processor.embed_abstracts()
-    # The processor will automatically save the new raw embeddings to the location specified in the config, make sure you have at least 8GB disk space available
-
-    # Next we will run the dimensionality reduction
-    # Without subset since we want to reduce the entire corpus
-    # And without labels since for semisupervised models we will have to recompute the UMAP step anyway.
-    # This will take about 10 minutes for 2.3 million documents
-    # We will obtain labels first so we can perform semisupervised models without having to recalculate the embeddings every time
-    # (only for deployment, for evaluation we should recalculate since umap depends on neighborhood structure)
-    # first we need plaintext labels we can convert to numeric labels for umap
-    subset = processor.filter_by_taxonomy(subset=processor.arxiv_df, target=None, threshold=0)
-    plaintext_labels, numeric_labels = processor.get_numeric_labels(subset, 0)
-
-    # This is usually done in BERTopic setup but we do it manually since we only call reduce_embeddings here
-    ids = subset.index.tolist()
-    processor.subset_embeddings = processor.embeddings[ids]
-
-    processor.reduce_embeddings(subset=subset, labels=numeric_labels) # This takes about 10 minutes on an A100 40GB
-    np.save(processor.FP.REDUCED_EMBEDS.value, processor.subset_reduced_embeddings, allow_pickle=False)
-    # These are all the preprocessing steps necessary for running topic models on huge datasets
-    # But this can also be performed by just using the ModelWrapper class since it instantiates a processor anyway. 
-
-
-#### Using the Model Wrapper for Setup:
-# what happens if we just let the model wrapper do its thing?
+from sciencenow.config import (
+    setup_params,
+)
 
 setup_params["target"] = "cs.LG"
 setup_params["cluster_size"] = 6
@@ -82,26 +55,127 @@ setup_params["secondary_target"] = "q-bio"
 setup_params["secondary_proportion"] = 0.2
 setup_params["trend_deviation"] = 1.67
 setup_params["recompute"] = True
-# if we somehow adjusted setup_params we can set usecache to False to guarantee refiltering (not necessary 99% of the time)
-wrapper = ModelWrapper(setup_params=setup_params, model_type="semisupervised", usecache=False)
 
-# This does the following: 
-# We look for a preprocessed .feather file that is a lot quicker to load from disk than a raw dataframe
-# We look for a cached subset, in case we already ran a model for the same date range
-# we load the sentence transformer embeddings of all abstracts
-# we select the relevant embeddings for the docuemnts that fall in the date range we specified
-# we recompute the reduced embeddings for this subset (if recompute: true)
-#   For Semisupervised Models we have no choice but to recompute embeddings, since we need to consider the labels in the UMAP step.
-# we build a corpus.tsv and vocab.txt file for the topic model evaluation
+SETUP_PARAMS = setup_params
 
-# we can now train and evaluate a topic model with the wrapper we just instantiated: 
-# for evaluation it is recommended to set setup_params["limit"] to a value between 5000 and 7500
-wrapper.tm_setup()
-_ = wrapper.tm_train()
+#### Testing the entire Experiment pipeline
+# set up sample of 50 papers from 2020
+path = "C:\\Users\\Bene\\Desktop\\testfolder\\Experiments\\all-distilroberta-v1\\taxonomy.txt"
+ds = ArxivDataset(path=path, pipeline=None)
+ds.load_taxonomy(path=path)
+
+target_pipe = ArxivPipeline(
+    steps=[
+        ArxivLoadFeatherStep(),
+        ArxivDateTimeFilterStep(
+            interval={
+                "startdate": "01 01 2020",
+                "enddate": "31 01 2020"}),
+        ArxivTaxonomyFilterStep(target="cs"),
+        ArxivPlaintextLabelStep(taxonomy=ds.taxonomy, threshold=25, target="cs"),
+        ArxivReduceSubsetStep(limit=400),
+        ArxivGetNumericLabelsStep(mask_probability=0),
+    ]
+)
+
+targetds = ArxivDataset(path=TemporaryFile().file.name, pipeline=target_pipe)
+targetds.execute_pipeline(input="C:\\Users\\Bene\\Desktop\\arxiv_processed.feather")
+
+# set up sample of q-bio papers we will add to target as a synthetic trend
+source_pipe = ArxivPipeline(
+    steps=[
+        ArxivLoadFeatherStep(),
+        ArxivDateTimeFilterStep(
+            interval={
+                "startdate": "01 01 2021",
+                "enddate": "31 12 2021"}),
+        ArxivTaxonomyFilterStep(target="q-bio"),
+        ArxivPlaintextLabelStep(taxonomy=ds.taxonomy, threshold=25, target=None),
+        #ArxivReduceSubsetStep(limit=50),
+        ArxivGetNumericLabelsStep(mask_probability=0),
+    ]
+)
+sourceds = ArxivDataset(path=TemporaryFile().file.name, pipeline=source_pipe)
+sourceds.execute_pipeline(input="C:\\Users\\Bene\\Desktop\\arxiv_processed.feather")
+
+# both datasets are still ordered by v1_datetime
+# setting up embedder (in this case the same one for both datasets)
+embedder = ArxivEmbedder(
+    source="C:\\Users\\Bene\\Desktop\\testfolder\\Experiments\\all-distilroberta-v1\\embeddings.npy",
+    target=TemporaryFile().file.name,
+    data=None
+)
+
+embedder.load()
+
+# We pass the merger object to the Model Object with the Reducer object.
+# The Model will take care of adjusting the labels and then performing the dim reduction.
+
+merger = SyntheticMerger(
+    source=sourceds,
+    target=targetds,
+    source_embedder=embedder,
+    target_embedder=embedder,
+)
+
+merger.merge(setup_params=SETUP_PARAMS)
+
+
+# Now we instantiate a reducer object that will take care of dimensionality reduction.
+reducer = UmapReducer(
+    setup_params=SETUP_PARAMS,
+    data=merger.embeddings,
+    labels=array(merger.data.numeric_labels)
+    )
+
+reducer.reduce()
+
+# Now we set up the topic model we wish to train
+
+cluster_model = HDBSCAN(
+                min_samples=SETUP_PARAMS["samples"],
+                gen_min_span_tree=True,
+                prediction_data=True,
+                min_cluster_size=SETUP_PARAMS["cluster_size"],
+)
+ctfidf_model = ClassTfidfTransformer(reduce_frequent_words=True)
+
+model = BERTopicDynamic(
+    data = merger.data,
+    embeddings = reducer.reduced_embeddings,
+    cluster_model=cluster_model,
+    ctfidf_model=ctfidf_model,
+)
+
+# train model
+
+model.train(setup_params=SETUP_PARAMS)
+
+eval_pipe = ArxivPipeline(
+    steps = [
+        GetOctisDatasetStep(root = str(Path(TemporaryFile().file.name).parent)),
+        GetDynamicTopicsStep(),
+        GetMetricsStep(),
+        CalculateDynamicDiversityStep(),
+        CalculateCoherenceStep(),
+        ExtractEvaluationResultsStep(
+            id=merger.get_id(SETUP_PARAMS, primary=False),
+            setup_params=SETUP_PARAMS
+        ),
+    ]
+)
+
+eval_pipe.execute(input=model)
 
 #### Trend Extraction: 
 
-trend_postprocessor = TrendPostprocessor(wrapper=wrapper)
+trend_postprocessor = TrendPostprocessor(
+    model=model,
+    merger=merger,
+    reducer=reducer,
+    setup_params=SETUP_PARAMS,
+    embedder=embedder,
+)
 # Performance calculations can be done since we added a synthetic subset
 trend_postprocessor.calculate_performance(threshold=1.5)
 
