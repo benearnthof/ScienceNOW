@@ -397,7 +397,7 @@ class GetOctisDatasetStep(PostprocessingStep):
     def execute(self, input: TopicModel) -> TopicModel:
         input.extract_corpus(path=self.root / "corpus.tsv")
         octis_ds = OctisDataset(self.root)
-        octis_ds.load_custom_dataset_from_folder(str(self.path.parent))
+        octis_ds.load_custom_dataset_from_folder(str(self.root))
         input.octis_ds = octis_ds
         return input
     
@@ -531,7 +531,7 @@ class CalculateDynamicDiversityStep(PostprocessingStep):
         results = {str(timestamp): {} for timestamp, _ in output_tm.items()}
         print(f"Evaluating Coherence and Diversity for {len(results)} timestamps.")
         for timestamp, topics in tqdm(output_tm.items()):
-            metrics = input.metrics()
+            metrics = input.metrics
             for scorers, _ in metrics:
                 for scorer, name in scorers:
                     score = scorer.score(topics)
@@ -593,15 +593,17 @@ class ExtractEvaluationResultsStep(PostprocessingStep):
     """
     Step that extracts evaluation metrics and results from a TopicModel and yields a dict.
     """
-    def __init__(self) -> None:
+    def __init__(self, id:str, setup_params:Dict[str, Any]) -> None:
         super().__init__()
+        self.id = id,
+        self.setup_params = setup_params,
 
-    def execute(self, input: TopicModel, id:str, setup_params:Dict[str, Any]) -> TopicModel:
+    def execute(self, input) -> TopicModel:
         result = {
-            "Dataset": id,
+            "Dataset": self.id,
             "Dataset Size": len(input.corpus),
             "Model": "BERTopic",
-            "Params": setup_params,
+            "Params": self.setup_params,
             "Diversity": input.diversity,
             "Coherence": input.coherence,
             "Topics": input.topics,

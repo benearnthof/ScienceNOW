@@ -65,7 +65,6 @@ class BERTopicExperiment(Experiment):
         self.model = model
         self.postprocessing = postprocessing
         self.setup_params = setup_params
-        
     
     def load(self):
         pass
