@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pathlib import Path
 
 from numpy import (
@@ -52,16 +52,18 @@ class UmapReducer(Reducer):
     """
     def __init__(
             self,
-            neighbors: int=15,
-            components: int=5,
-            metric: str="cosine",
+            setup_params: Dict[str, Any],
             source: Optional[str]=None,
             target: Optional[str]=None,
             data: ndarray=None,
             labels: ndarray=None,
             ) -> None:
         super().__init__()
-        self.umap_model = UMAP(neighbors, components, metric)
+        self.umap_model = UMAP(
+            setup_params["umap_neighbors"], 
+            setup_params["umap_components"], 
+            setup_params["umap_metric"]
+        )
         self.source=Path(source) if source is not None else None
         self.target=Path(target) if source is not None else None
         self.data=data

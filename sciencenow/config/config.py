@@ -73,6 +73,10 @@ setup_params = {
     "global_tuning": False, # For dynamic model
     "limit": None,
     "subset_cache": "C:\\Users\\Bene\\Desktop\\testfolder\\Experiments\\all-distilroberta-v1\\subset_cache",
+    "sentence_model": config.SENTENCE_MODEL,
+    "umap_neighbors": config.UMAP_NEIGHBORS,
+    "umap_components":config.UMAP_COMPONENTS,
+    "umap_metric": config.UMAP_METRIC,
 }
 
 online_params = {# For online DBSTREAM https://riverml.xyz/latest/api/cluster/DBSTREAM/

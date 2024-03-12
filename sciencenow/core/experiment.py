@@ -10,7 +10,7 @@ from tqdm import tqdm
 from sciencenow.core.pipelines import Pipeline
 from sciencenow.core.dataset import Dataset, DatasetMerger
 from sciencenow.core.model import TopicModel
-from sciencenow.core.dimensionality import UmapReducer
+from sciencenow.core.dimensionality import Reducer
 
 
 class Experiment(ABC):
@@ -21,11 +21,10 @@ class Experiment(ABC):
     Args: 
         model: TopicModel that will be trained and evaluated.
         postprocessing: List of postprocessing pipelines to be executed when training is complete.
-        merger: DatasetMerger that contains data & document embeddings that w
+        
     """
     model: TopicModel
     postprocessing: List[Pipeline]
-    merger: DatasetMerger
 
     @abstractmethod
     def load(self):
@@ -50,19 +49,23 @@ class BERTopicExperiment(Experiment):
     """
     def __init__(
             self,
-            datapath: List[str],
-            pipeline: List[Pipeline],
             model: TopicModel,
             postprocessing: List[Pipeline],
             setup_params: Dict[str, Any]
             ) -> None:
+        """
+        Initialize Experiment object.
+
+        Args: 
+            merger: DatasetMerger that contains data & document embeddings that will be used for model
+            reducer: Reducer that specifies how document embeddings will be reduced for clustering
+            setup_params: Dict that provides auxiliary parameters.
+        """
         super().__init__()
-        self.datapath = datapath
-        self.pipeline = pipeline
         self.model = model
         self.postprocessing = postprocessing
         self.setup_params = setup_params
-        self.reducer = None
+        
     
     def load(self):
         pass
@@ -70,13 +73,9 @@ class BERTopicExperiment(Experiment):
     def save(self):
         pass
 
-    def setup(self):
-        #### Caching can be done by setting up a separate pipeline that takes in a df directly from Experiment
-        
-
-
     def run(self):
-        pass
-    
+        print(f"Training topic model with params: {self.setup_params}")
+        self.model.train()
+
     def eval(self):
-        pass
+        self.postprocessing.execute(input=self.model)

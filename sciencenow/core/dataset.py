@@ -194,6 +194,7 @@ class BasicMerger(DatasetMerger):
         self.data = None
         self.embeddings = None
 
+
     def load(self, datapath: str, embedpath: str) -> None:
         """
         Load merged dataset from disk.
@@ -220,6 +221,7 @@ class BasicMerger(DatasetMerger):
         self.embeddings = load_array(embedpath)
         print(f"Loaded data and embeddings from {datapath} & {embedpath}")
 
+
     def save(self, datapath:str, embedpath: str) -> None:
         """
         Save merged dataset to disk.
@@ -239,6 +241,7 @@ class BasicMerger(DatasetMerger):
             print(f"Stored dataframe and embeddings at {datapath}, {embedpath}.")
         else:
             raise NotImplementedError("Data or embeddings missing, aborting save.")
+
 
     def get_id(self, setup_params: Dict[str, Any], primary: bool=True) -> str:
         """
@@ -260,14 +263,21 @@ class BasicMerger(DatasetMerger):
             Both Datasets have already been preprocessed to the needed proportions. 
             All that remains is the concatenation of both of them.
         """
-        if not isinstance(self.source, Dataset) or not isinstance(self.target, Dataset):
-            raise NotImplementedError("Please provide both source and target Dataset.")
-        if not isinstance(self.source_embedder, Embedder) or not isinstance(self.target_embedder, Embedder):
-            raise NotImplementedError("Please provide both source and target Embedder.")
-        
-        if self.source_embedder.embeddings is None or self.target_embedder.embeddings is None:
+        if not isinstance(self.target, Dataset):
+            raise NotImplementedError("Please provide target Dataset.")
+        if not isinstance(self.target_embedder, Embedder):
+            raise NotImplementedError("Please provide target Embedder.")
+        if self.target_embedder.embeddings is None:
             raise NotImplementedError("Please provide both source and target embeddings.")
-        
+        if self.target is None:
+            raise NotImplementedError("Cannot merge to empty target Dataset.")
+        if self.source is None:
+            print(f"No sampling source provided, target will not be modified.")
+            self.data = self.target.data
+            target_ids = self.target.index.tolist()
+            self.embeddings = self.target_embedder.embeddings[target_ids]
+            return
+        # TODO: If only one dataset is provided just save data and embeddings from one set no merge required
         source_ids = self.source.data.index.tolist()
         target_ids = self.target.data.index.tolist()
         source_embeddings = self.source_embedder.embeddings[source_ids]
@@ -277,6 +287,8 @@ class BasicMerger(DatasetMerger):
         # Merger Object merges data and retrieves embeddings
         # Then we need to obtain updated numeric labels
         # Then we can pass the merged embeddings to the UmapReducer class
+
+
 
 class SyntheticMerger(BasicMerger):
     """
@@ -299,20 +311,29 @@ class SyntheticMerger(BasicMerger):
         
         self.papers_per_bin = None
 
+
     def merge(self, setup_params: Dict[str, Any]) -> None:
         """
         Overwrites basic merge in favor of a custom sampling procedure based on setup parameters.
         Assumes both source and target dataset already have numeric labels & plaintext labels.
         At least target dataset must have column "v1_datetime".
         """
+        if self.target is None:
+            raise NotImplementedError("Cannot merge to empty target Dataset.")
+        if self.source is None:
+            print(f"No sampling source provided, target will not be modified.")
+            self.data = self.target.data
+            target_ids = self.target.index.tolist()
+            self.embeddings = self.target_embedder.embeddings[target_ids]
+            return
         target, source = self.target.data, self.source.data
         # synthetic trend will be sampled from source and added to target
         # simplest idea: Insert proportion of source into target
         amount = int(len(target) * setup_params["secondary_proportion"])
         # we know by setup through steps that the source dataset is large enough to sample from
         synthetic_set = source.sample(n = amount)
-        print(f"Selected {amount} papers to be merged with subset.")
         synthetic_set = self.adjust_timestamps(synthetic_set, setup_params)
+        print(f"Selected {len(synthetic_set)} papers to be merged with subset.")
         # obtain merged embeddings
         synthetic_ids = synthetic_set.index.tolist()
         target_ids = target.index.tolist()
@@ -323,20 +344,21 @@ class SyntheticMerger(BasicMerger):
         self.data = concat_dataframe([target, synthetic_set])
         self.embeddings = concat_array((target_embeddings, synthetic_embeddings)) # TODO: Order should be preserved, need to write test
 
+
     def adjust_timestamps(self, synthetic_set: DataFrame, setup_params: Dict[str, Any]) -> DataFrame:
         """
         Adjusts timestamps of source data to simulate a trend in target data upon merging.
         Args:
             setup_params: Dict that specifies how trend will be introduced to the data.
         """
-        target_timestamps = self.target.v1_datetime.tolist()
+        target_timestamps = self.target.data.v1_datetime.tolist()
         bins, n_trends, deviation = setup_params["nr_bins"], setup_params["n_trends"], setup_params["trend_deviation"]
         trend_multipliers = [1] * (bins - n_trends) + [deviation] * n_trends
         shuffle(trend_multipliers)
 
         # normalize so we can calculate how many papers should fall into each bin
         trend_multipliers = array([float(i) / sum(trend_multipliers) for i in trend_multipliers])
-        self.papers_per_bin = random_int(self.trend_multipliers * len(synthetic_set)).astype(int)
+        self.papers_per_bin = random_int(trend_multipliers * len(synthetic_set)).astype(int)
         print(f"PAPERS PER BIN: {self.papers_per_bin}")
         
         # make sure that samples will match in length
@@ -353,6 +375,7 @@ class SyntheticMerger(BasicMerger):
         new_set.v1_datetime = new_timestamps
         return new_set
     
+
     def adjust_labels(self, target, synthetic):
         """
         Method to adjust Labels.

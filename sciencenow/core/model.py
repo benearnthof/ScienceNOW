@@ -83,7 +83,6 @@ class BERTopicBase(TopicModel):
             verbose=True,
             calculate_probabilities=False,
         )
-        print("Setup complete.")
 
     def load(self, path: str) -> None:
         """
@@ -151,6 +150,7 @@ class BERTopicBase(TopicModel):
         print(f"Successfully built vocab for subset at {path}.")
         self.vocabulary = path
 
+
     def train(self):
         """
         Train a basic Topic model. Neither Online nor Dynamic
@@ -178,19 +178,12 @@ class BERTopicOnline(BERTopicBase):
             ctfidf_model: Any
             ) -> None:
         super().__init__(data, embeddings, cluster_model, ctfidf_model)
-        self.data = data
-        self.embeddings = embeddings # sciencenow.core.dimensionality.UmapReducer.reduced_embeddings
-        self.reducer = Dimensionality(self.embeddings) # embeddings for subset are always already reduced
         self.cluster_model = River(model=DBSTREAM(**cluster_params))
         self.ctfidf_model = ClassTfidfTransformer(reduce_frequent_words=True, bm25_weighting=True)
         self.vectorizer_model = OnlineCountVectorizer(min_df=10, stop_words="english") # min_df to avoid memory problems during eval
         # TODO: Doublecheck if this is needed, should be handled by init of superclass already
-        self.topics = None
-        self.topic_info = None
         self.topics_over_time = None
-        self.corpus = None
-        self.vocabulary = None
-
+        
         self.topic_model = BERTopic(
             umap_model=self.reducer,
             hdbscan_model=self.cluster_model,
@@ -236,26 +229,8 @@ class BERTopicDynamic(BERTopicBase):
             cluster_model: Any, 
             ctfidf_model: Any) -> None:
         super().__init__(data, embeddings, cluster_model, ctfidf_model)
-        self.data = data
-        self.embeddings = embeddings
-        self.reducer = Dimensionality(self.embeddings)
-        self.cluster_model = cluster_model
-        self.vectorizer_model = CountVectorizer(stop_words="english")
-
-        self.topics = None
-        self.topic_info = None
+        
         self.topics_over_time = None
-        self.corpus = None
-        self.vocabulary = None
-
-        self.topic_model = BERTopic(
-            umap_model=self.reducer,
-            hdbscan_model=self.cluster_model,
-            ctfidf_model=self.ctfidf_model,
-            vectorizer_model=self.vectorizer_model,
-            verbose=True,
-            calculate_probabilities=False,
-        )
         print("Setup complete.")
 
     def train(self, setup_params: Dict[str, Any]) -> None:

@@ -9,7 +9,14 @@ from pandas import DataFrame, read_json, to_datetime, read_feather
 from numpy import array
 from random import choices
 
+from octis.dataset.dataset import Dataset as OctisDataset
+from octis.evaluation_metrics.diversity_metrics import TopicDiversity
+import gensim.corpora as corpora
+from gensim.models.coherencemodel import CoherenceModel
+from gensim.test.utils import get_tmpfile
+
 from sciencenow.core.utils import get_plaintext_name
+from sciencenow.core.model import TopicModel
 
 class Step(ABC):
     """
@@ -361,3 +368,245 @@ class ArxivGetNumericLabelsStep(Step):
             numeric_labels = num_labs.tolist()
         output = input.assign(numeric_labels=numeric_labels)
         return output
+
+
+#### Postprocessing Steps
+# Central Idea: Take trained model object as input and add needed variables to it on the fly
+
+
+class PostprocessingStep(Step):
+    """
+    Extends Base Class Step to restrict inputs to TopicModels
+    """
+    @abstractmethod
+    def execute(self, input: TopicModel) -> TopicModel:
+        raise NotImplemented
+    
+
+class GetOctisDatasetStep(PostprocessingStep):
+    """
+    Sets up Corpus and Vocab for topic model evaluation
+
+    Args:
+        root: string that specifies folder where eval dataset should be written to.
+    """
+    def __init__(self, root:str) -> None:
+        super().__init__()
+        self.root = Path(root)
+
+    def execute(self, input: TopicModel) -> TopicModel:
+        input.extract_corpus(path=self.root / "corpus.tsv")
+        octis_ds = OctisDataset(self.root)
+        octis_ds.load_custom_dataset_from_folder(str(self.path.parent))
+        input.octis_ds = octis_ds
+        return input
+    
+
+class GetBaseTopicsStep(PostprocessingStep):
+    """
+    Initial Step to add base topics to topic model for coherence and diversity calculation.
+
+    Args: 
+        path: string that specifies where corpus of topic model will be written to must end in .tsv
+    """
+    def __init__(self, path:str) -> None:
+        super().__init__()
+        self.path = Path(path)
+        if not self.path.suffix == ".tsv":
+            raise NotImplementedError(f"Corpus path must be .tsv, found {self.path.suffix}")
+
+    def execute(self, input: TopicModel) -> TopicModel:
+        if input.octis_ds is None:
+            raise NotImplementedError("Input must have dataset in OCTIS format. Execute `GetOctisDatasetStep` first.")
+        corpus = input.octis_ds.get_corpus()
+        all_words = [word for words in corpus for word in words]
+        bertopic_topics = [
+            [
+                vals[0] if vals[0] in all_words else all_words[0]
+                for vals in input.topic_model.get_topic(i)[:10]
+            ]
+            for i in range(len(set(input.topic_model.topics_)) - 1)
+        ]
+        input.output_tm = {"topics": bertopic_topics}
+        return input
+    
+
+class GetDynamicTopicsStep(PostprocessingStep):
+    """
+    Extends Postprocessing step to allow extraction of dynamic topics for coherence and diversity calcualtion.
+    """
+    def __init__(self) -> None:
+        super().__init__()
+
+    def execute(self, input: TopicModel) -> TopicModel:
+        if input.octis_ds is None:
+            raise NotImplementedError("Input must have dataset in OCTIS format. Execute `GetOctisDatasetStep` first.")
+        corpus = input.octis_ds.get_corpus()
+        unique_timestamps = input.topics_over_time.Timestamp.unique()
+        dynamic_topics = {}
+        all_words_cased = list(set([word for words in corpus for word in words]))
+        all_words_lowercase = [word.lower() for word in all_words_cased]
+
+        for unique_timestamp in tqdm(unique_timestamps):
+            dtm_topic = input.topics_over_time.loc[
+                input.topics_over_time.Timestamp == unique_timestamp, :
+            ].sort_values("Frequency", ascending=True)
+            dtm_topic = dtm_topic.loc[dtm_topic.Topic != -1, :]
+            dtm_topic = [topic.split(", ") for topic in dtm_topic.Words.values]
+            dynamic_topics[unique_timestamp] = {"topics": dtm_topic}
+            # replacement is in all words
+            # all words contain capital letters, but topic labels only contain lower case letters
+            updated_topics = []
+            for topic in dtm_topic:
+                updated_topic = []
+                for word in topic:
+                    if word not in all_words_cased and word not in all_words_lowercase:
+                        all_words_cased.append(word)
+                        updated_topic.append(word)
+                        #print(f"Word: {word} Replacement: {replacement}")
+                        print(word)
+                    else:
+                        updated_topic.append(word)
+                updated_topics.append(updated_topic)
+            dynamic_topics[unique_timestamp] = {"topics": updated_topics}
+        
+        input.output_tm = dynamic_topics
+        return input
+
+
+class GetMetricsStep(PostprocessingStep):
+    """
+    Prepare Coherence & Diversity evaluation metrics using OCTIS
+
+    Args:
+        topk: int that specifies how many words of every topic description will be used for eval.
+    """
+    def __init__(self, topk:int=5) -> None:
+        super().__init__()
+        self.topk = topk
+
+    def execute(self, input:TopicModel) -> TopicModel:
+        topic_diversity = TopicDiversity(topk=self.topk)
+        # Define methods
+        diversity = [(topic_diversity, "diversity")]
+        input.metrics = [(diversity, "Diversity")]
+        return input
+
+
+class CalculateBaseDiversityStep(PostprocessingStep):
+    """
+    Step to evaluate basic Topic Model
+    """
+    def __init__(self) -> None:
+        super().__init__()
+    
+    def execute(self, input:TopicModel) -> TopicModel:
+        if input.output_tm is None:
+            raise NotImplementedError("Eval output needed. Execute `GetDynamicTopicsStep` or `GetBaseTopicsStep` first.")
+        if input.metrics is None:
+            raise NotImplementedError("Metrics needed. Execute `GetMetricsStep` first.")
+        metrics = input.metrics
+        results = {}
+        for scorers, _ in metrics:
+            for scorer, name in scorers:
+                score = scorer.score(input.output_tm)
+                results[name] = float(score)
+        
+        input.diversity = results
+        return input
+
+class CalculateDynamicDiversityStep(PostprocessingStep):
+    """
+    Step that calculates Diversity for Dynamic or Online Models
+    """
+    def __init__(self) -> None:
+        super().__init__()
+
+    def execute(self, input: TopicModel) -> TopicModel:
+        if input.output_tm is None:
+            raise NotImplementedError("Eval output needed. Execute `GetDynamicTopicsStep` or `GetBaseTopicsStep` first.")
+        if input.metrics is None:
+            raise NotImplementedError("Metrics needed. Execute `GetMetricsStep` first.")
+        output_tm = input.output_tm
+        results = {str(timestamp): {} for timestamp, _ in output_tm.items()}
+        print(f"Evaluating Coherence and Diversity for {len(results)} timestamps.")
+        for timestamp, topics in tqdm(output_tm.items()):
+            metrics = input.metrics()
+            for scorers, _ in metrics:
+                for scorer, name in scorers:
+                    score = scorer.score(topics)
+                    results[str(timestamp)][name] = float(score)
+        input.diversity = results
+        return input
+
+
+class CalculateCoherenceStep(PostprocessingStep):
+    """
+    Manually calculating topic coherence to avoid an OCTIS bug that happened with 
+        empty topics.
+        https://github.com/MaartenGr/BERTopic/issues/90
+    """
+    def __init__(self) -> None:
+        super().__init__()
+
+    def execute(self, input: TopicModel) -> TopicModel:
+        documents = DataFrame({
+            "Document": input.data.abstract.tolist(),
+            "ID": range(len(input.data)),
+            "Topic": input.topics
+            })
+        documents_per_topic = documents.groupby(['Topic'], as_index=False).agg({'Document': ' '.join})
+        cleaned_docs = input.topic_model._preprocess_text(documents_per_topic.Document.values)
+        # use vectorizer with different min_df to reduce memory requirements
+        vectorizer = input.topic_model.vectorizer_model
+        #vectorizer = CountVectorizer(min_df=15, stop_words="english")
+        analyzer = vectorizer.build_analyzer()
+        words = vectorizer.get_feature_names()
+        # Extract features for Topic Coherence evaluation
+        tokens = [analyzer(doc) for doc in cleaned_docs]
+        dictionary = corpora.Dictionary(tokens)
+        corpus = [dictionary.doc2bow(token) for token in tokens]
+        corpus_output_fname = get_tmpfile("corpus.mm")
+        # save corpus as sparse matrix
+        corpora.MmCorpus.serialize(corpus_output_fname, corpus)
+        mm_corpus = corpora.MmCorpus(corpus_output_fname)
+        # Extract words in each topic if they are non-empty and exist in the dictionary
+        topic_words = []
+        for topic in range(len(set(input.topics))-input.topic_model._outliers):
+            words = list(zip(*input.topic_model.get_topic(topic)))[0]
+            words = [word for word in words if word in dictionary.token2id]
+            topic_words.append(words)
+        topic_words = [words for words in topic_words if len(words) > 0]
+        coherence_model = CoherenceModel(
+            topics=topic_words, 
+            texts=tokens, 
+            corpus=mm_corpus,
+            dictionary=dictionary, 
+            coherence='c_v'
+            )
+        print(f"Calculating coherence for {len(Counter(input.topics))} topics...")
+        input.coherence = coherence_model.get_coherence()
+        return input
+
+
+class ExtractEvaluationResultsStep(PostprocessingStep):
+    """
+    Step that extracts evaluation metrics and results from a TopicModel and yields a dict.
+    """
+    def __init__(self) -> None:
+        super().__init__()
+
+    def execute(self, input: TopicModel, id:str, setup_params:Dict[str, Any]) -> TopicModel:
+        result = {
+            "Dataset": id,
+            "Dataset Size": len(input.corpus),
+            "Model": "BERTopic",
+            "Params": setup_params,
+            "Diversity": input.diversity,
+            "Coherence": input.coherence,
+            "Topics": input.topics,
+        }
+        input.evaluation_results = result
+        return input
+
+
